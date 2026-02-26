@@ -1,0 +1,28 @@
+version: "3.9"
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      - SESSION_ID=${SESSION_ID}
+      - USER_ID=${USER_ID}
+      - REPO_URL=${REPO_URL}
+      - TASK=${TASK}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/.gcp/credentials.json
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - workspace:/workspace
+      - ./.gcp:/app/.gcp:ro
+
+  api:
+    build: .
+    ports: ["8080:8080"]
+    environment:
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+
+volumes:
+  workspace:     # persists across container restarts
