@@ -11,6 +11,8 @@ import asyncio
 import base64
 import os
 
+import aiofiles
+
 
 WORKSPACE_ROOT = os.environ.get("WORKSPACE_ROOT", "/workspace")
 
@@ -103,8 +105,9 @@ async def frontend_verification_complete(
         if fname.lower().endswith((".png", ".jpg", ".jpeg")):
             fpath = os.path.join(screenshot_dir, fname)
             try:
-                with open(fpath, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("ascii")
+                async with aiofiles.open(fpath, "rb") as f:
+                    raw = await f.read()
+                data = base64.b64encode(raw).decode("ascii")
                 screenshots.append({"filename": fname, "base64": data})
             except Exception as exc:
                 screenshots.append({"filename": fname, "error": str(exc)})

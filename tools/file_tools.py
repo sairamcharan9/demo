@@ -52,26 +52,28 @@ async def list_files(path: str = ".", tool_context=None, workspace: str | None =
     if not os.path.isdir(root):
         return {"error": f"Directory not found: {path}"}
 
-    lines: list[str] = []
-    all_files: list[str] = []
+    def _scan():
+        lines: list[str] = []
+        all_files: list[str] = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Skip hidden directories like .git
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            level = len(Path(dirpath).relative_to(root).parts)
+            indent = "  " * level
+            basename = os.path.basename(dirpath)
+            if level == 0:
+                lines.append(f"{path}/")
+            else:
+                lines.append(f"{indent}{basename}/")
+            for fname in sorted(filenames):
+                if fname.startswith("."):
+                    continue
+                lines.append(f"{indent}  {fname}")
+                rel = os.path.relpath(os.path.join(dirpath, fname), root)
+                all_files.append(rel.replace("\\", "/"))
+        return lines, all_files
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        # Skip hidden directories like .git
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        level = len(Path(dirpath).relative_to(root).parts)
-        indent = "  " * level
-        basename = os.path.basename(dirpath)
-        if level == 0:
-            lines.append(f"{path}/")
-        else:
-            lines.append(f"{indent}{basename}/")
-        for fname in sorted(filenames):
-            if fname.startswith("."):
-                continue
-            lines.append(f"{indent}  {fname}")
-            rel = os.path.relpath(os.path.join(dirpath, fname), root)
-            all_files.append(rel.replace("\\", "/"))
-
+    lines, all_files = await asyncio.to_thread(_scan)
     return {"tree": "\n".join(lines), "files": all_files}
 
 
@@ -102,7 +104,7 @@ async def write_file(path: str, content: str, tool_context=None, workspace: str 
     Emits a CUSTOM gitPatch event in production (via tool_context).
     """
     full = _resolve_safe_path(path, workspace)
-    os.makedirs(os.path.dirname(full), exist_ok=True)
+    await asyncio.to_thread(os.makedirs, os.path.dirname(full), exist_ok=True)
 
     try:
         async with aiofiles.open(full, "w", encoding="utf-8", newline="\n") as fh:
@@ -169,9 +171,9 @@ async def delete_file(path: str, tool_context=None, workspace: str | None = None
 
     try:
         if os.path.isdir(full):
-            shutil.rmtree(full)
+            await asyncio.to_thread(shutil.rmtree, full)
         else:
-            os.remove(full)
+            await asyncio.to_thread(os.remove, full)
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -188,10 +190,10 @@ async def rename_file(
     if not os.path.exists(src):
         return {"error": f"Source not found: {source}"}
 
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    await asyncio.to_thread(os.makedirs, os.path.dirname(dst), exist_ok=True)
 
     try:
-        shutil.move(src, dst)
+        await asyncio.to_thread(shutil.move, src, dst)
     except Exception as exc:
         return {"error": str(exc)}
 
