@@ -4,12 +4,16 @@ File Tools — 8 tools for filesystem operations inside /workspace.
 All paths are validated to prevent traversal outside the workspace root.
 Each tool takes a tool_context parameter for state management (ADK ToolContext
 in production, dict with 'state' key for testing).
+
+All tools are async for ADK parallelisation.
 """
 
 import os
 import shutil
-import subprocess
+import asyncio
 from pathlib import Path
+
+import aiofiles
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +42,7 @@ def _resolve_safe_path(relative_path: str, workspace: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def list_files(path: str = ".", tool_context=None, workspace: str | None = None) -> dict:
+async def list_files(path: str = ".", tool_context=None, workspace: str | None = None) -> dict:
     """List all files and directories under *path* relative to the workspace.
 
     Returns a dict with ``tree`` (formatted string) and ``files`` (flat list).
@@ -71,7 +75,7 @@ def list_files(path: str = ".", tool_context=None, workspace: str | None = None)
     return {"tree": "\n".join(lines), "files": all_files}
 
 
-def read_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
+async def read_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
     """Read the contents of a file. Returns content with line numbers.
 
     Called 10-15 times during the setup phase to understand the codebase.
@@ -81,8 +85,8 @@ def read_file(path: str, tool_context=None, workspace: str | None = None) -> dic
         return {"error": f"File not found: {path}"}
 
     try:
-        with open(full, "r", encoding="utf-8", errors="replace") as fh:
-            raw = fh.read()
+        async with aiofiles.open(full, "r", encoding="utf-8", errors="replace") as fh:
+            raw = await fh.read()
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -92,7 +96,7 @@ def read_file(path: str, tool_context=None, workspace: str | None = None) -> dic
     return {"content": raw, "numbered": numbered, "lines": len(raw.splitlines())}
 
 
-def write_file(path: str, content: str, tool_context=None, workspace: str | None = None) -> dict:
+async def write_file(path: str, content: str, tool_context=None, workspace: str | None = None) -> dict:
     """Create or overwrite a file. Parent directories are created automatically.
 
     Emits a CUSTOM gitPatch event in production (via tool_context).
@@ -101,18 +105,18 @@ def write_file(path: str, content: str, tool_context=None, workspace: str | None
     os.makedirs(os.path.dirname(full), exist_ok=True)
 
     try:
-        with open(full, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(content)
+        async with aiofiles.open(full, "w", encoding="utf-8", newline="\n") as fh:
+            await fh.write(content)
     except Exception as exc:
         return {"error": str(exc)}
 
     return {"status": "ok", "path": path, "bytes": len(content)}
 
 
-def replace_with_git_merge_diff(
+async def replace_with_git_merge_diff(
     path: str, diff: str, tool_context=None, workspace: str | None = None
 ) -> dict:
-    """Apply a unified diff to an existing file using ``patch``.
+    """Apply a unified diff to an existing file using ``git apply``.
 
     Preferred over write_file for surgical edits.
     Emits a CUSTOM gitPatch event in production.
@@ -123,38 +127,38 @@ def replace_with_git_merge_diff(
 
     ws = workspace or WORKSPACE_ROOT
     try:
-        result = subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", "-"],
-            input=diff,
-            capture_output=True,
-            text=True,
+        proc = await asyncio.create_subprocess_exec(
+            "git", "apply", "--whitespace=nowarn", "-",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=ws,
-            timeout=30,
         )
-        if result.returncode != 0:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(input=diff.encode()), timeout=30)
+        if proc.returncode != 0:
             # Fallback: try with patch command
-            result = subprocess.run(
-                ["patch", "-p1", "--no-backup-if-mismatch"],
-                input=diff,
-                capture_output=True,
-                text=True,
+            proc2 = await asyncio.create_subprocess_exec(
+                "patch", "-p1", "--no-backup-if-mismatch",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=ws,
-                timeout=30,
             )
-            if result.returncode != 0:
+            stdout2, stderr2 = await asyncio.wait_for(proc2.communicate(input=diff.encode()), timeout=30)
+            if proc2.returncode != 0:
                 return {
-                    "error": f"Patch failed: {result.stderr.strip()}",
-                    "stdout": result.stdout.strip(),
+                    "error": f"Patch failed: {stderr2.decode().strip()}",
+                    "stdout": stdout2.decode().strip(),
                 }
     except FileNotFoundError:
         return {"error": "Neither 'git' nor 'patch' command found on system"}
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         return {"error": "Patch command timed out after 30s"}
 
     return {"status": "ok", "path": path}
 
 
-def delete_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
+async def delete_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
     """Delete a file from the workspace.
 
     Emits a CUSTOM gitPatch event in production.
@@ -174,7 +178,7 @@ def delete_file(path: str, tool_context=None, workspace: str | None = None) -> d
     return {"status": "ok", "path": path}
 
 
-def rename_file(
+async def rename_file(
     source: str, destination: str, tool_context=None, workspace: str | None = None
 ) -> dict:
     """Move or rename a file within the workspace."""
@@ -194,33 +198,33 @@ def rename_file(
     return {"status": "ok", "source": source, "destination": destination}
 
 
-def restore_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
+async def restore_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
     """Revert a single file to its last git committed state.
 
     Equivalent to ``git checkout -- <path>``.
     """
-    full = _resolve_safe_path(path, workspace)
+    _resolve_safe_path(path, workspace)  # validate path stays inside workspace
     ws = workspace or WORKSPACE_ROOT
 
     try:
-        result = subprocess.run(
-            ["git", "checkout", "--", full],
-            capture_output=True,
-            text=True,
+        proc = await asyncio.create_subprocess_exec(
+            "git", "checkout", "--", path,   # relative path — not absolute
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=ws,
-            timeout=30,
         )
-        if result.returncode != 0:
-            return {"error": f"git checkout failed: {result.stderr.strip()}"}
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            return {"error": f"git checkout failed: {stderr.decode().strip()}"}
     except FileNotFoundError:
         return {"error": "git not found on system"}
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         return {"error": "git checkout timed out"}
 
     return {"status": "ok", "path": path}
 
 
-def reset_all(tool_context=None, workspace: str | None = None) -> dict:
+async def reset_all(tool_context=None, workspace: str | None = None) -> dict:
     """Hard reset the entire workspace to HEAD.
 
     Equivalent to ``git reset --hard HEAD``. Emergency use only.
@@ -228,18 +232,18 @@ def reset_all(tool_context=None, workspace: str | None = None) -> dict:
     ws = workspace or WORKSPACE_ROOT
 
     try:
-        result = subprocess.run(
-            ["git", "reset", "--hard", "HEAD"],
-            capture_output=True,
-            text=True,
+        proc = await asyncio.create_subprocess_exec(
+            "git", "reset", "--hard", "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=ws,
-            timeout=30,
         )
-        if result.returncode != 0:
-            return {"error": f"git reset failed: {result.stderr.strip()}"}
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            return {"error": f"git reset failed: {stderr.decode().strip()}"}
     except FileNotFoundError:
         return {"error": "git not found on system"}
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         return {"error": "git reset timed out"}
 
     return {"status": "ok", "message": "Workspace reset to HEAD"}

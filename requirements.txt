@@ -12,3 +12,5 @@ beautifulsoup4
 requests
 python-dotenv
 pytest
+aiofiles
+pytest-asyncio

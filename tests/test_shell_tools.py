@@ -1,8 +1,7 @@
-"""Tests for tools/shell_tools.py — all 3 shell tools."""
+"""Tests for tools/shell_tools.py — all 3 shell tools (async)."""
 
 import os
 import base64
-import pytest
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -12,6 +11,8 @@ from tools.shell_tools import (
     frontend_verification_instructions,
     frontend_verification_complete,
 )
+
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -53,34 +54,37 @@ def workspace_with_screenshots(tmp_path):
 
 
 class TestRunInBashSession:
-    def test_echo(self, workspace):
-        result = run_in_bash_session("echo hello", workspace=workspace)
+    async def test_echo(self, workspace):
+        result = await run_in_bash_session("echo hello", workspace=workspace)
         assert result["exit_code"] == 0
         assert "hello" in result["stdout"]
 
-    def test_captures_stderr(self, workspace):
-        result = run_in_bash_session("echo err >&2", workspace=workspace)
+    async def test_captures_stderr(self, workspace):
+        result = await run_in_bash_session("echo err >&2", workspace=workspace)
         assert "err" in result.get("stderr", "") or "err" in result.get("stdout", "")
 
-    def test_nonzero_exit(self, workspace):
-        result = run_in_bash_session("exit 42", workspace=workspace)
+    async def test_nonzero_exit(self, workspace):
+        result = await run_in_bash_session("exit 42", workspace=workspace)
         assert result["exit_code"] == 42
 
-    def test_cwd_is_workspace(self, workspace):
+    async def test_cwd_is_workspace(self, workspace):
         # Create a file, then check we can see it
         with open(os.path.join(workspace, "marker.txt"), "w") as f:
             f.write("found")
-        result = run_in_bash_session("cat marker.txt", workspace=workspace)
-        # On Windows this may use shell fallback
+        result = await run_in_bash_session(
+            'python -c "print(open(\'marker.txt\').read())"',
+            workspace=workspace,
+        )
         if "error" not in result:
             assert result["exit_code"] == 0
+            assert "found" in result["stdout"]
 
-    def test_command_stored(self, workspace):
-        result = run_in_bash_session("echo test", workspace=workspace)
+    async def test_command_stored(self, workspace):
+        result = await run_in_bash_session("echo test", workspace=workspace)
         assert result["command"] == "echo test"
 
-    def test_multiline_output(self, workspace):
-        result = run_in_bash_session("echo line1 && echo line2", workspace=workspace)
+    async def test_multiline_output(self, workspace):
+        result = await run_in_bash_session("echo line1 && echo line2", workspace=workspace)
         assert "line1" in result["stdout"]
         assert "line2" in result["stdout"]
 
@@ -91,14 +95,14 @@ class TestRunInBashSession:
 
 
 class TestFrontendVerificationInstructions:
-    def test_returns_instructions(self):
-        result = frontend_verification_instructions()
+    async def test_returns_instructions(self):
+        result = await frontend_verification_instructions()
         assert "instructions" in result
         assert "Playwright" in result["instructions"]
         assert "screenshot" in result["instructions"].lower()
 
-    def test_includes_example(self):
-        result = frontend_verification_instructions()
+    async def test_includes_example(self):
+        result = await frontend_verification_instructions()
         assert "sync_playwright" in result["instructions"]
 
 
@@ -108,12 +112,12 @@ class TestFrontendVerificationInstructions:
 
 
 class TestFrontendVerificationComplete:
-    def test_no_screenshots_dir(self, workspace):
-        result = frontend_verification_complete(workspace=workspace)
+    async def test_no_screenshots_dir(self, workspace):
+        result = await frontend_verification_complete(workspace=workspace)
         assert "error" in result
 
-    def test_reads_screenshots(self, workspace_with_screenshots):
-        result = frontend_verification_complete(workspace=workspace_with_screenshots)
+    async def test_reads_screenshots(self, workspace_with_screenshots):
+        result = await frontend_verification_complete(workspace=workspace_with_screenshots)
         assert result["status"] == "ok"
         assert result["count"] == 1
         assert result["screenshots"][0]["filename"] == "test.png"
@@ -121,13 +125,13 @@ class TestFrontendVerificationComplete:
         decoded = base64.b64decode(result["screenshots"][0]["base64"])
         assert decoded[:4] == b"\x89PNG"
 
-    def test_captures_notes(self, workspace_with_screenshots):
-        result = frontend_verification_complete(
+    async def test_captures_notes(self, workspace_with_screenshots):
+        result = await frontend_verification_complete(
             notes="Looks good", workspace=workspace_with_screenshots
         )
         assert result["notes"] == "Looks good"
 
-    def test_empty_screenshots_dir(self, tmp_path):
+    async def test_empty_screenshots_dir(self, tmp_path):
         (tmp_path / "screenshots").mkdir()
-        result = frontend_verification_complete(workspace=str(tmp_path))
+        result = await frontend_verification_complete(workspace=str(tmp_path))
         assert "error" in result

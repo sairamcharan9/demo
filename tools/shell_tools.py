@@ -3,9 +3,11 @@ Shell Tools — 3 tools for executing commands inside the workspace sandbox.
 
 run_in_bash_session is the most-called tool during execution.
 Frontend verification tools handle Playwright-based screenshot testing.
+
+All tools are async for ADK parallelisation.
 """
 
-import subprocess
+import asyncio
 import base64
 import os
 
@@ -13,7 +15,7 @@ import os
 WORKSPACE_ROOT = os.environ.get("WORKSPACE_ROOT", "/workspace")
 
 
-def run_in_bash_session(
+async def run_in_bash_session(
     command: str, tool_context=None, workspace: str | None = None
 ) -> dict:
     """Execute a bash command inside the workspace directory.
@@ -26,46 +28,26 @@ def run_in_bash_session(
     ws = workspace or WORKSPACE_ROOT
 
     try:
-        result = subprocess.run(
-            ["bash", "-c", command],
-            capture_output=True,
-            text=True,
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=ws,
-            timeout=120,
-            env={**os.environ, "HOME": "/root", "TERM": "dumb"},
         )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
         return {
-            "exit_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "exit_code": proc.returncode,
+            "stdout": stdout.decode(),
+            "stderr": stderr.decode(),
             "command": command,
         }
-    except FileNotFoundError:
-        # Windows fallback for local testing
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                cwd=ws,
-                timeout=120,
-                shell=True,
-            )
-            return {
-                "exit_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "command": command,
-            }
-        except Exception as exc:
-            return {"error": str(exc), "command": command}
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         return {"error": "Command timed out after 120s", "command": command}
     except Exception as exc:
         return {"error": str(exc), "command": command}
 
 
-def frontend_verification_instructions(tool_context=None) -> dict:
+async def frontend_verification_instructions(tool_context=None) -> dict:
     """Return instructions for writing a Playwright test.
 
     The agent uses these instructions to write and run a visual test
@@ -102,7 +84,7 @@ def test_frontend():
     return {"instructions": instructions}
 
 
-def frontend_verification_complete(
+async def frontend_verification_complete(
     notes: str = "", tool_context=None, workspace: str | None = None
 ) -> dict:
     """Run Playwright screenshot verification and return the result.
