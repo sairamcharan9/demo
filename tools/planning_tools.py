@@ -4,17 +4,12 @@ Planning Tools — 6 tools for plan management and state tracking.
 All state mutations go through tool_context.state[key] to ensure
 they are persisted by VertexAiSessionService in production.
 
-In testing, tool_context is a simple object with a `state` dict attribute.
+In testing, tool_context is MockToolContext (mirrors ToolContext.state).
 
 All tools are async for ADK parallelisation.
 """
 
-
-class MockToolContext:
-    """Minimal stand-in for ADK ToolContext during testing."""
-
-    def __init__(self, state: dict | None = None):
-        self.state = state if state is not None else {}
+from google.adk.tools import ToolContext
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +17,7 @@ class MockToolContext:
 # ---------------------------------------------------------------------------
 
 
-async def set_plan(steps: list[str], tool_context) -> dict:
+async def set_plan(steps: list[str], tool_context: ToolContext) -> dict:
     """Write the execution plan to session state.
 
     Sets ``plan`` (list of step descriptions) and ``current_step`` to 0.
@@ -43,7 +38,7 @@ async def set_plan(steps: list[str], tool_context) -> dict:
     }
 
 
-async def plan_step_complete(step_index: int, summary: str, tool_context) -> dict:
+async def plan_step_complete(step_index: int, summary: str, tool_context: ToolContext) -> dict:
     """Mark a plan step as complete and advance to the next one.
 
     Appends ``{step_index, summary}`` to ``completed_steps`` and
@@ -75,7 +70,7 @@ async def plan_step_complete(step_index: int, summary: str, tool_context) -> dic
     }
 
 
-async def request_plan_review(tool_context) -> dict:
+async def request_plan_review(tool_context: ToolContext) -> dict:
     """Pause the agent and request user approval for the current plan.
 
     Sets ``awaiting_approval`` to True. In production this emits an
@@ -94,7 +89,7 @@ async def request_plan_review(tool_context) -> dict:
     }
 
 
-async def record_user_approval_for_plan(tool_context) -> dict:
+async def record_user_approval_for_plan(tool_context: ToolContext) -> dict:
     """Record that the user has approved the plan.
 
     Sets ``approved`` to True and clears ``awaiting_approval``.
@@ -111,7 +106,7 @@ async def record_user_approval_for_plan(tool_context) -> dict:
     }
 
 
-async def pre_commit_instructions(tool_context=None) -> dict:
+async def pre_commit_instructions(tool_context: ToolContext = None) -> dict:
     """Return the pre-commit checklist the agent must complete before submit().
 
     This is a verification gate — the agent self-checks these items.
@@ -133,7 +128,7 @@ async def pre_commit_instructions(tool_context=None) -> dict:
     }
 
 
-async def initiate_memory_recording(key: str, value: str, tool_context) -> dict:
+async def initiate_memory_recording(key: str, value: str, tool_context: ToolContext) -> dict:
     """Write a user-scoped fact to session state.
 
     Keys are prefixed with ``user:`` so they persist across all sessions

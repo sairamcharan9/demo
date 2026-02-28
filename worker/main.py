@@ -12,6 +12,12 @@ import os
 import sys
 import asyncio
 import logging
+import time
+
+from dotenv import load_dotenv
+
+# Load .env for local runs (no-op in Docker if .env doesn't exist)
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 from google.adk.runners import Runner
 from google.genai.types import Content, Part
@@ -138,12 +144,35 @@ async def run_worker():
         memory_service=memory_service,
     )
 
-    # --- Create session ---
+    # --- Create session with pre-initialized state ---
+    # Every key referenced by {key} in the system prompt AND every key
+    # that tools read/write must be pre-seeded here so ADK injection works
+    # from the very first turn (ADK §3.3).
     session = await session_service.create_session(
         app_name="forge",
         user_id=user_id,
         state={
+            # Identity
             "automation_mode": automation_mode,
+            # Plan lifecycle (planning_tools.py reads/writes these)
+            "plan": [],
+            "current_step": 0,
+            "completed_steps": [],
+            "approved": False,
+            "awaiting_approval": False,
+            # Submission lifecycle (communication_tools.py)
+            "submitted": False,
+            "commit_message": "",
+            "task_complete": False,
+            "final_summary": "",
+            # Communication
+            "messages": [],
+            "typed_messages": [],
+            "awaiting_user_input": False,
+            "user_input_prompt": "",
+            # PR tracking (git_tools.py / communication_tools.py)
+            "pr_url": "",
+            "pr_number": 0,
         },
     )
     logger.info("Session created: %s", session.id)
@@ -157,32 +186,62 @@ async def run_worker():
     else:
         task_with_mode = task
 
-    # --- Run the agent ---
+    # --- Run the agent (with retry for rate limits) ---
     logger.info("Starting agent loop...")
     user_message = Content(parts=[Part(text=task_with_mode)])
 
-    async for event in runner.run_async(
-        session_id=session.id,
-        user_id=user_id,
-        new_message=user_message,
-    ):
-        # Log events for observability
-        if hasattr(event, "content") and event.content and event.content.parts:
-            for part in event.content.parts:
-                if hasattr(part, "text") and part.text:
-                    logger.info("[Agent] %s", part.text[:500])
-                if hasattr(part, "function_call") and part.function_call:
-                    logger.info(
-                        "[Tool Call] %s(%s)",
-                        part.function_call.name,
-                        str(part.function_call.args)[:200],
-                    )
-                if hasattr(part, "function_response") and part.function_response:
-                    logger.info(
-                        "[Tool Result] %s → %s",
-                        part.function_response.name,
-                        str(part.function_response.response)[:200],
-                    )
+    max_retries = 5
+    retry_delay = 15  # seconds, doubles each retry
+
+    for attempt in range(max_retries + 1):
+        try:
+            async for event in runner.run_async(
+                session_id=session.id,
+                user_id=user_id,
+                new_message=user_message,
+            ):
+                # Log events for observability
+                if hasattr(event, "content") and event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            logger.info("[Agent] %s", part.text[:500])
+                        if hasattr(part, "function_call") and part.function_call:
+                            logger.info(
+                                "[Tool Call] %s(%s)",
+                                part.function_call.name,
+                                str(part.function_call.args)[:200],
+                            )
+                        if hasattr(part, "function_response") and part.function_response:
+                            logger.info(
+                                "[Tool Result] %s \u2192 %s",
+                                part.function_response.name,
+                                str(part.function_response.response)[:200],
+                            )
+            # If we get here, the loop finished successfully
+            break
+
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            is_rate_limit = (
+                "429" in exc_str
+                or "resource exhausted" in exc_str
+                or "rate limit" in exc_str
+                or "quota" in exc_str
+                or "unavailable" in exc_str
+                or "overloaded" in exc_str
+                or "try again" in exc_str
+            )
+            if is_rate_limit and attempt < max_retries:
+                wait = retry_delay * (2 ** attempt)
+                logger.warning(
+                    "Rate limited (attempt %d/%d). Retrying in %ds...",
+                    attempt + 1, max_retries, wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+            else:
+                logger.error("Agent failed: %s", exc)
+                raise
 
     logger.info("=== Forge Worker Complete ===")
 

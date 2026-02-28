@@ -1,4 +1,4 @@
-"""Tests for tools/research_tools.py — google_search and view_text_website (async).
+"""Tests for tools/research_tools.py — all 4 research tools (async).
 
 All HTTP calls are mocked — no API keys or network access required.
 """
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from tools.research_tools import google_search, view_text_website
+from tools.research_tools import google_search, view_text_website, take_screenshot, view_image
 
 import pytest
 import httpx
@@ -170,3 +170,120 @@ class TestViewTextWebsite:
         result = await view_text_website("https://example.com")
         assert "error" in result
         assert "timed out" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# take_screenshot
+# ---------------------------------------------------------------------------
+
+
+class TestTakeScreenshot:
+    async def test_empty_url(self):
+        result = await take_screenshot("")
+        assert "error" in result
+
+    async def test_invalid_protocol(self):
+        result = await take_screenshot("ftp://example.com")
+        assert "error" in result
+        assert "http" in result["error"]
+
+    @patch("tools.research_tools.asyncio.create_subprocess_exec")
+    async def test_successful_screenshot(self, mock_exec, tmp_path):
+        # Create a fake screenshot file that the tool will read
+        screenshot_dir = tmp_path / "screenshots"
+        screenshot_dir.mkdir()
+        fake_png = screenshot_dir / "screenshot.png"
+        fake_png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_exec.return_value = mock_proc
+
+        result = await take_screenshot(
+            "https://example.com", workspace=str(tmp_path)
+        )
+        assert result["status"] == "ok"
+        assert result["url"] == "https://example.com"
+        assert "base64" in result
+        assert result["size_bytes"] > 0
+
+    @patch("tools.research_tools.asyncio.create_subprocess_exec")
+    async def test_screenshot_process_error(self, mock_exec, tmp_path):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.communicate = AsyncMock(return_value=(b"", b"Chromium not found"))
+        mock_exec.return_value = mock_proc
+
+        result = await take_screenshot(
+            "https://example.com", workspace=str(tmp_path)
+        )
+        assert "error" in result
+        assert "Chromium not found" in result["error"]
+
+    @patch("tools.research_tools.asyncio.create_subprocess_exec")
+    async def test_screenshot_timeout(self, mock_exec, tmp_path):
+        import asyncio
+
+        mock_exec.side_effect = asyncio.TimeoutError()
+
+        result = await take_screenshot(
+            "https://example.com", workspace=str(tmp_path)
+        )
+        assert "error" in result
+        assert "timed out" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# view_image
+# ---------------------------------------------------------------------------
+
+
+class TestViewImage:
+    async def test_empty_path(self):
+        result = await view_image("")
+        assert "error" in result
+
+    async def test_file_not_found(self, tmp_path):
+        result = await view_image("missing.png", workspace=str(tmp_path))
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    async def test_unsupported_format(self, tmp_path):
+        (tmp_path / "file.txt").write_text("not an image")
+        result = await view_image("file.txt", workspace=str(tmp_path))
+        assert "error" in result
+        assert "Unsupported" in result["error"]
+
+    async def test_reads_png(self, tmp_path):
+        fake_png = tmp_path / "test.png"
+        fake_png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+        result = await view_image("test.png", workspace=str(tmp_path))
+        assert result["status"] == "ok"
+        assert result["mime_type"] == "image/png"
+        assert "base64" in result
+        assert result["size_bytes"] == 58  # 8 header + 50 padding
+
+    async def test_reads_jpeg(self, tmp_path):
+        fake_jpg = tmp_path / "photo.jpg"
+        fake_jpg.write_bytes(b"\xff\xd8\xff" + b"\x00" * 30)
+
+        result = await view_image("photo.jpg", workspace=str(tmp_path))
+        assert result["status"] == "ok"
+        assert result["mime_type"] == "image/jpeg"
+
+    async def test_path_traversal_blocked(self, tmp_path):
+        result = await view_image("../../etc/passwd.png", workspace=str(tmp_path))
+        assert "error" in result
+        assert "escapes" in result["error"].lower() or "not found" in result["error"].lower()
+
+    async def test_oversized_file(self, tmp_path):
+        big_file = tmp_path / "huge.png"
+        # Create a file > 10MB
+        big_file.write_bytes(b"\x00" * (11 * 1024 * 1024))
+
+        result = await view_image("huge.png", workspace=str(tmp_path))
+        assert "error" in result
+        assert "too large" in result["error"].lower()
+

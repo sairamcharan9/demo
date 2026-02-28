@@ -3,7 +3,7 @@ File Tools — 8 tools for filesystem operations inside /workspace.
 
 All paths are validated to prevent traversal outside the workspace root.
 Each tool takes a tool_context parameter for state management (ADK ToolContext
-in production, dict with 'state' key for testing).
+in production, MockToolContext for testing).
 
 All tools are async for ADK parallelisation.
 """
@@ -14,6 +14,7 @@ import asyncio
 from pathlib import Path
 
 import aiofiles
+from google.adk.tools import ToolContext
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +43,7 @@ def _resolve_safe_path(relative_path: str, workspace: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def list_files(path: str = ".", tool_context=None, workspace: str | None = None) -> dict:
+async def list_files(path: str = ".", tool_context: ToolContext = None, workspace: str | None = None) -> dict:
     """List all files and directories under *path* relative to the workspace.
 
     Returns a dict with ``tree`` (formatted string) and ``files`` (flat list).
@@ -77,7 +78,7 @@ async def list_files(path: str = ".", tool_context=None, workspace: str | None =
     return {"tree": "\n".join(lines), "files": all_files}
 
 
-async def read_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
+async def read_file(path: str, tool_context: ToolContext = None, workspace: str | None = None) -> dict:
     """Read the contents of a file. Returns content with line numbers.
 
     Called 10-15 times during the setup phase to understand the codebase.
@@ -98,7 +99,7 @@ async def read_file(path: str, tool_context=None, workspace: str | None = None) 
     return {"content": raw, "numbered": numbered, "lines": len(raw.splitlines())}
 
 
-async def write_file(path: str, content: str, tool_context=None, workspace: str | None = None) -> dict:
+async def write_file(path: str, content: str, tool_context: ToolContext = None, workspace: str | None = None) -> dict:
     """Create or overwrite a file. Parent directories are created automatically.
 
     Emits a CUSTOM gitPatch event in production (via tool_context).
@@ -116,7 +117,7 @@ async def write_file(path: str, content: str, tool_context=None, workspace: str 
 
 
 async def replace_with_git_merge_diff(
-    path: str, diff: str, tool_context=None, workspace: str | None = None
+    path: str, diff: str, tool_context: ToolContext = None, workspace: str | None = None
 ) -> dict:
     """Apply a unified diff to an existing file using ``git apply``.
 
@@ -160,7 +161,7 @@ async def replace_with_git_merge_diff(
     return {"status": "ok", "path": path}
 
 
-async def delete_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
+async def delete_file(path: str, tool_context: ToolContext = None, workspace: str | None = None) -> dict:
     """Delete a file from the workspace.
 
     Emits a CUSTOM gitPatch event in production.
@@ -181,7 +182,7 @@ async def delete_file(path: str, tool_context=None, workspace: str | None = None
 
 
 async def rename_file(
-    source: str, destination: str, tool_context=None, workspace: str | None = None
+    source: str, destination: str, tool_context: ToolContext = None, workspace: str | None = None
 ) -> dict:
     """Move or rename a file within the workspace."""
     src = _resolve_safe_path(source, workspace)
@@ -200,7 +201,7 @@ async def rename_file(
     return {"status": "ok", "source": source, "destination": destination}
 
 
-async def restore_file(path: str, tool_context=None, workspace: str | None = None) -> dict:
+async def restore_file(path: str, tool_context: ToolContext = None, workspace: str | None = None) -> dict:
     """Revert a single file to its last git committed state.
 
     Equivalent to ``git checkout -- <path>``.
@@ -226,7 +227,7 @@ async def restore_file(path: str, tool_context=None, workspace: str | None = Non
     return {"status": "ok", "path": path}
 
 
-async def reset_all(tool_context=None, workspace: str | None = None) -> dict:
+async def reset_all(tool_context: ToolContext = None, workspace: str | None = None) -> dict:
     """Hard reset the entire workspace to HEAD.
 
     Equivalent to ``git reset --hard HEAD``. Emergency use only.

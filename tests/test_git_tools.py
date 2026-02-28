@@ -1,7 +1,7 @@
-"""Tests for tools/git_tools.py — make_commit and watch_pr_ci_status (async).
+"""Tests for tools/git_tools.py — all 4 git tools (async).
 
-make_commit tests use a real git repo (git_workspace fixture).
-watch_pr_ci_status tests mock the gh CLI since they need a real PR.
+make_commit and create_branch tests use a real git repo (git_workspace fixture).
+watch_pr_ci_status and create_pr tests mock the gh CLI since they need a real PR.
 """
 
 import os
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from tools.git_tools import make_commit, watch_pr_ci_status
+from tools.git_tools import make_commit, watch_pr_ci_status, create_branch, create_pr
 
 import pytest
 
@@ -129,3 +129,111 @@ class TestWatchPrCiStatus:
 
         result = await watch_pr_ci_status(42)
         assert result["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# create_branch
+# ---------------------------------------------------------------------------
+
+
+class TestCreateBranch:
+    async def test_creates_branch(self, git_workspace):
+        result = await create_branch("feat/new-feature", workspace=git_workspace)
+        assert result["status"] == "ok"
+        assert result["branch"] == "feat/new-feature"
+
+        # Verify we're on the new branch
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=git_workspace,
+            capture_output=True,
+            text=True,
+        )
+        assert branch.stdout.strip() == "feat/new-feature"
+
+    async def test_empty_name_rejected(self):
+        result = await create_branch("")
+        assert "error" in result
+
+    async def test_invalid_name_rejected(self):
+        result = await create_branch("bad branch name!")
+        assert "error" in result
+        assert "Invalid" in result["error"]
+
+    async def test_double_dot_rejected(self):
+        result = await create_branch("feat..fix")
+        assert "error" in result
+
+    async def test_trailing_slash_rejected(self):
+        result = await create_branch("feat/")
+        assert "error" in result
+
+    async def test_lock_extension_rejected(self):
+        result = await create_branch("refs.lock")
+        assert "error" in result
+
+    async def test_branch_already_exists(self, git_workspace):
+        # Create branch first
+        await create_branch("existing-branch", workspace=git_workspace)
+        # Switch back to main
+        subprocess.run(["git", "checkout", "-"], cwd=git_workspace, capture_output=True)
+        # Try creating again
+        result = await create_branch("existing-branch", workspace=git_workspace)
+        assert "error" in result
+        assert "already exists" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# create_pr
+# ---------------------------------------------------------------------------
+
+
+class TestCreatePr:
+    async def test_empty_title_rejected(self):
+        result = await create_pr("")
+        assert "error" in result
+
+    @patch("tools.git_tools.asyncio.create_subprocess_exec")
+    async def test_successful_pr_creation(self, mock_exec):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(
+            b"https://github.com/org/repo/pull/42\n",
+            b"",
+        ))
+        mock_exec.return_value = mock_proc
+
+        result = await create_pr("feat: add login", body="Adds login page")
+        assert result["status"] == "ok"
+        assert result["pr_url"] == "https://github.com/org/repo/pull/42"
+        assert result["pr_number"] == 42
+        assert result["title"] == "feat: add login"
+
+    @patch("tools.git_tools.asyncio.create_subprocess_exec")
+    async def test_pr_with_branch(self, mock_exec):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(
+            b"https://github.com/org/repo/pull/10\n",
+            b"",
+        ))
+        mock_exec.return_value = mock_proc
+
+        result = await create_pr("fix: typo", branch="fix/typo")
+        assert result["status"] == "ok"
+        # Verify --head was passed
+        call_args = mock_exec.call_args[0]
+        assert "--head" in call_args
+        assert "fix/typo" in call_args
+
+    @patch("tools.git_tools.asyncio.create_subprocess_exec")
+    async def test_gh_error(self, mock_exec):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.communicate = AsyncMock(return_value=(b"", b"no upstream configured"))
+        mock_exec.return_value = mock_proc
+
+        result = await create_pr("test PR")
+        assert "error" in result
+        assert "no upstream" in result["error"]
+

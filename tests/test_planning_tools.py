@@ -6,7 +6,6 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tools.planning_tools import (
-    MockToolContext,
     set_plan,
     plan_step_complete,
     request_plan_review,
@@ -14,6 +13,7 @@ from tools.planning_tools import (
     pre_commit_instructions,
     initiate_memory_recording,
 )
+from tests.conftest import MockToolContext
 
 import pytest
 

@@ -12,13 +12,14 @@ import base64
 import os
 
 import aiofiles
+from google.adk.tools import ToolContext
 
 
 WORKSPACE_ROOT = os.environ.get("WORKSPACE_ROOT", "/workspace")
 
 
 async def run_in_bash_session(
-    command: str, tool_context=None, workspace: str | None = None
+    command: str, tool_context: ToolContext = None, workspace: str | None = None
 ) -> dict:
     """Execute a bash command inside the workspace directory.
 
@@ -49,7 +50,7 @@ async def run_in_bash_session(
         return {"error": str(exc), "command": command}
 
 
-async def frontend_verification_instructions(tool_context=None) -> dict:
+async def frontend_verification_instructions(tool_context: ToolContext = None) -> dict:
     """Return instructions for writing a Playwright test.
 
     The agent uses these instructions to write and run a visual test
@@ -87,7 +88,7 @@ def test_frontend():
 
 
 async def frontend_verification_complete(
-    notes: str = "", tool_context=None, workspace: str | None = None
+    notes: str = "", tool_context: ToolContext = None, workspace: str | None = None
 ) -> dict:
     """Run Playwright screenshot verification and return the result.
 

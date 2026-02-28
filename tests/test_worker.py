@@ -74,3 +74,80 @@ class TestAutomationModes:
 
     def test_exactly_three_modes(self):
         assert len(AUTOMATION_MODES) == 3
+
+
+class TestSessionStateInit:
+    """Verify that create_session is called with all required state keys.
+
+    ADK {key} injection only works if keys exist in session state. Every key
+    referenced as {key} in the system prompt and every key tools read/write
+    must be pre-seeded at session creation time.
+    """
+
+    REQUIRED_STATE_KEYS = {
+        # System prompt {key} placeholders
+        "automation_mode",
+        "plan",
+        "current_step",
+        "completed_steps",
+        "approved",
+        "submitted",
+        "task_complete",
+        # Planning tools
+        "awaiting_approval",
+        # Communication tools
+        "commit_message",
+        "final_summary",
+        "messages",
+        "typed_messages",
+        "awaiting_user_input",
+        "user_input_prompt",
+        # PR tracking
+        "pr_url",
+        "pr_number",
+    }
+
+    @patch("worker.main.Runner")
+    @patch("worker.main.create_agent")
+    @patch("worker.main.create_services")
+    @patch("worker.main.clone_repo")
+    async def test_session_created_with_all_required_keys(
+        self, mock_clone, mock_services, mock_create_agent, mock_runner, monkeypatch
+    ):
+        monkeypatch.setenv("REPO_URL", "https://github.com/test/repo.git")
+        monkeypatch.setenv("TASK", "Fix the bug")
+
+        # Mock services
+        mock_session_service = AsyncMock()
+        mock_session = MagicMock()
+        mock_session.id = "test-session"
+        mock_session_service.create_session = AsyncMock(return_value=mock_session)
+        mock_services.return_value = (mock_session_service, MagicMock())
+
+        # Mock agent + runner
+        mock_agent = MagicMock()
+        mock_agent.name = "forge"
+        mock_agent.model = "gemini-2.5-pro"
+        mock_create_agent.return_value = mock_agent
+
+        # run_async must be an async generator, not a sync iter
+        async def empty_async_gen(*args, **kwargs):
+            return
+            yield  # noqa: makes this an async generator
+
+        mock_runner_instance = MagicMock()
+        mock_runner_instance.run_async = empty_async_gen
+        mock_runner.return_value = mock_runner_instance
+
+        from worker.main import run_worker
+        await run_worker()
+
+        # Verify create_session was called
+        mock_session_service.create_session.assert_called_once()
+        call_kwargs = mock_session_service.create_session.call_args
+        state = call_kwargs.kwargs.get("state") or call_kwargs[1].get("state", {})
+
+        # Every required key must be present
+        missing = self.REQUIRED_STATE_KEYS - set(state.keys())
+        assert not missing, f"Missing state keys: {missing}"
+
