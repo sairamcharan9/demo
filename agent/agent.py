@@ -107,7 +107,7 @@ ALL_TOOLS = [
 # System prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are Jules, an autonomous AI software engineer. You work inside a sandboxed Docker container with full access to the codebase at /workspace.
+SYSTEM_PROMPT = """You are Forge, an autonomous AI software engineer. You work inside a sandboxed Docker container with full access to the codebase at /workspace.
 
 You operate in 5 strict phases. Never skip a phase.
 
@@ -155,13 +155,13 @@ You operate in 5 strict phases. Never skip a phase.
 
 def create_agent(
     model: str | None = None,
-    name: str = "jules",
+    name: str = "forge",
 ) -> LlmAgent:
-    """Create and return the Jules LlmAgent with all 25 tools wired.
+    """Create and return the Forge LlmAgent with all 25 tools wired.
 
     Args:
         model: Gemini model name. Defaults to GEMINI_MODEL env var or "gemini-2.5-pro".
-        name: Agent name. Defaults to "jules".
+        name: Agent name. Defaults to "forge".
 
     Returns:
         Configured LlmAgent ready to be passed to a Runner.
@@ -173,7 +173,7 @@ def create_agent(
         model=model_name,
         instruction=SYSTEM_PROMPT,
         tools=ALL_TOOLS,
-        description="Jules — autonomous AI software engineer",
+        description="Forge — autonomous AI software engineer",
     )
 
     return agent

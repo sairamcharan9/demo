@@ -104,7 +104,7 @@ async def view_text_website(
         async with httpx.AsyncClient(
             timeout=30,
             follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; JulesBot/1.0)"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; ForgeBot/1.0)"},
         ) as client:
             resp = await client.get(url)
             resp.raise_for_status()

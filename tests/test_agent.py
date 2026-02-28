@@ -13,7 +13,7 @@ import pytest
 class TestCreateAgent:
     def test_creates_agent(self):
         agent = create_agent()
-        assert agent.name == "jules"
+        assert agent.name == "forge"
 
     def test_default_model(self, monkeypatch):
         monkeypatch.delenv("GEMINI_MODEL", raising=False)
