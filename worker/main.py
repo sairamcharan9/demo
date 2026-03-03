@@ -13,6 +13,7 @@ import sys
 import asyncio
 import logging
 import time
+import argparse
 
 from dotenv import load_dotenv
 
@@ -94,12 +95,12 @@ async def clone_repo(repo_url: str, workspace: str, github_token: str | None = N
 # ---------------------------------------------------------------------------
 
 
-async def run_worker():
+async def run_worker(task_arg: str | None = None):
     """Main worker loop: clone, create agent, run task."""
 
     # --- Read config from env ---
     repo_url = os.environ.get("REPO_URL")
-    task = os.environ.get("TASK")
+    task = task_arg or os.environ.get("TASK")
     session_id = os.environ.get("SESSION_ID", "default-session")
     user_id = os.environ.get("USER_ID", "default-user")
     github_token = os.environ.get("GITHUB_TOKEN")
@@ -248,7 +249,10 @@ async def run_worker():
 
 def main():
     """Sync entry point for Docker CMD."""
-    asyncio.run(run_worker())
+    parser = argparse.ArgumentParser(description="Forge Agent Worker")
+    parser.add_argument("task", nargs="?", default=None, help="Task description for the agent")
+    args = parser.parse_args()
+    asyncio.run(run_worker(args.task))
 
 
 if __name__ == "__main__":

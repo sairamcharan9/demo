@@ -110,7 +110,7 @@ async def submit(commit_message: str, tool_context: ToolContext, workspace: str 
         rc, out, err = await _run_git(["git", "commit", "-m", commit_message], ws)
         if rc != 0:
             if "nothing to commit" in err or "nothing to commit" in out:
-                return {"error": "Nothing to commit — working tree is clean."}
+                return {"error": "Nothing to commit — working tree is clean. Make changes before submitting."}
             return {"error": f"git commit failed: {err}"}
 
         # 3. Get commit SHA
@@ -145,6 +145,10 @@ async def submit(commit_message: str, tool_context: ToolContext, workspace: str 
             match = re.search(r"/pull/(\d+)", pr_url)
             if match:
                 pr_number = int(match.group(1))
+
+        # 6. Reset workspace to main for the next task
+        await _run_git(["git", "checkout", "main"], ws)
+        await _run_git(["git", "pull", "origin", "main"], ws)
 
     except FileNotFoundError:
         return {"error": "git or gh CLI not found on system"}

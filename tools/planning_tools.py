@@ -17,10 +17,14 @@ from google.adk.tools import ToolContext
 # ---------------------------------------------------------------------------
 
 
-async def set_plan(steps: list[str], tool_context: ToolContext) -> dict:
+async def set_plan(
+    steps: list[str], tool_context: ToolContext = None, branch_name: str = ""
+) -> dict:
     """Write the execution plan to session state.
 
     Sets ``plan`` (list of step descriptions) and ``current_step`` to 0.
+    If ``branch_name`` is provided (e.g., 'feat/add-foo'), the system will
+    automatically create and checkout this branch before Phase 2 begins.
     Emits AG-UI STATE_DELTA in production.
     """
     if not steps:
@@ -30,11 +34,15 @@ async def set_plan(steps: list[str], tool_context: ToolContext) -> dict:
     tool_context.state["current_step"] = 0
     tool_context.state["completed_steps"] = []
     tool_context.state["approved"] = False
+    
+    if branch_name:
+        tool_context.state["target_branch_name"] = branch_name
 
     return {
         "status": "ok",
         "total_steps": len(steps),
         "plan": steps,
+        "branch_name": branch_name,
     }
 
 

@@ -29,8 +29,8 @@ def workspace(tmp_path):
 @pytest.fixture
 def workspace_with_screenshots(tmp_path):
     """Workspace with a screenshots directory containing a test image."""
-    ss_dir = tmp_path / "screenshots"
-    ss_dir.mkdir()
+    ss_dir = tmp_path / "forge_scratchpad" / "screenshots"
+    ss_dir.mkdir(parents=True)
     # Create a minimal 1x1 red PNG
     import struct, zlib
     def make_png():
@@ -132,6 +132,6 @@ class TestFrontendVerificationComplete:
         assert result["notes"] == "Looks good"
 
     async def test_empty_screenshots_dir(self, tmp_path):
-        (tmp_path / "screenshots").mkdir()
+        (tmp_path / "forge_scratchpad" / "screenshots").mkdir(parents=True)
         result = await frontend_verification_complete(workspace=str(tmp_path))
         assert "error" in result

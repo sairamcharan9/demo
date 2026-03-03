@@ -58,7 +58,7 @@ async def frontend_verification_instructions(tool_context: ToolContext = None) -
     """
     instructions = """
 Frontend Verification Steps:
-1. Write a Playwright test file at /workspace/test_frontend.py
+1. Write a Playwright test file at /workspace/forge_scratchpad/test_frontend.py
 2. The test should:
    a. Launch the dev server (if not already running)
    b. Navigate to the relevant page
@@ -66,7 +66,7 @@ Frontend Verification Steps:
    d. Take a screenshot with page.screenshot()
    e. Assert key visual elements are present
 3. Use the Chromium browser (pre-installed in container)
-4. Save screenshots to /workspace/screenshots/
+4. Save screenshots to /workspace/forge_scratchpad/screenshots/
 5. After writing the test, call frontend_verification_complete()
 
 Example test structure:
@@ -79,7 +79,7 @@ def test_frontend():
         page = browser.new_page()
         page.goto("http://localhost:3000")
         page.wait_for_selector("h1")
-        page.screenshot(path="/workspace/screenshots/verify.png")
+        page.screenshot(path="/workspace/forge_scratchpad/screenshots/verify.png")
         browser.close()
 ```
 """.strip()
@@ -96,7 +96,7 @@ async def frontend_verification_complete(
     as base64-encoded PNGs. Emits CUSTOM media artifact in production.
     """
     ws = workspace or WORKSPACE_ROOT
-    screenshot_dir = os.path.join(ws, "screenshots")
+    screenshot_dir = os.path.join(ws, "forge_scratchpad", "screenshots")
 
     if not os.path.isdir(screenshot_dir):
         return {"error": "No screenshots directory found. Run tests first."}
@@ -114,7 +114,7 @@ async def frontend_verification_complete(
                 screenshots.append({"filename": fname, "error": str(exc)})
 
     if not screenshots:
-        return {"error": "No screenshot files found in /workspace/screenshots/"}
+        return {"error": "No screenshot files found in /workspace/forge_scratchpad/screenshots/"}
 
     return {
         "status": "ok",

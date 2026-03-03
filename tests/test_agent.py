@@ -42,7 +42,7 @@ class TestCreateAgent:
 
     def test_has_tools(self):
         agent = create_agent()
-        assert len(agent.tools) == 32
+        assert len(agent.tools) == 31
 
     def test_has_instruction(self):
         agent = create_agent()
@@ -61,7 +61,7 @@ class TestCreateAgent:
 
 class TestAllTools:
     def test_tool_count(self):
-        assert len(ALL_TOOLS) == 32
+        assert len(ALL_TOOLS) == 31
 
     def test_all_tools_are_callable(self):
         for tool in ALL_TOOLS:
