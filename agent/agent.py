@@ -97,7 +97,6 @@ ALL_TOOLS = [
     delete_file,
     rename_file,
     run_in_bash_session,
-    create_branch,
     # Phase 3 — Verify
     frontend_verification_instructions,
     frontend_verification_complete,
@@ -153,6 +152,28 @@ async def before_model_callback(callback_context, llm_request, **kwargs):
         phase = _infer_phase(state)
         plan = state.get("plan", [])
         step = state.get("current_step", 0)
+
+        # Auto-branch creation at the start of Execute phase
+        if phase == "Phase 2 — Execute" and state.get("approved"):
+            plan_hash = str(hash(tuple(plan))) if plan else ""
+            if plan_hash and state.get("last_branched_plan") != plan_hash:
+                import time
+                import asyncio
+                from tools.git_tools import WORKSPACE_ROOT
+                
+                # Fetch branch name set by the agent during set_plan, or fallback
+                custom_name = state.get("target_branch_name")
+                branch_name = custom_name if custom_name else f"forge-feature-{int(time.time())}"
+                
+                logger.info("Auto-creating branch for execution: %s", branch_name)
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "checkout", "-b", branch_name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=WORKSPACE_ROOT,
+                )
+                await proc.communicate()
+                state["last_branched_plan"] = plan_hash
 
         logger.info(
             "[before_model] phase=%s step=%d/%d approved=%s submitted=%s",
@@ -216,9 +237,10 @@ You operate in 5 strict phases. Never skip a phase.
 
 ## Phase 1 — Plan
 1. Based on orientation, create a step-by-step execution plan using `set_plan`.
-2. Each step should be atomic and testable.
-3. Call `request_plan_review` and STOP. Wait for user approval before proceeding.
-4. Do NOT write any code until the plan is approved.
+2. MANDATORY: You must provide a descriptive `branch_name` (e.g., "feat/add-login") when calling `set_plan`.
+3. Each step should be atomic and testable.
+4. Call `request_plan_review` and STOP. Wait for user approval before proceeding.
+5. Do NOT write any code until the plan is approved.
 
 ## Phase 2 — Execute
 1. Work through the plan step by step. Call `plan_step_complete` after each step.
@@ -226,7 +248,6 @@ You operate in 5 strict phases. Never skip a phase.
 3. Use `write_file` only for new files or full rewrites.
 4. Use `run_in_bash_session` to install dependencies, run intermediate checks, etc.
 5. Use `message_user` or `send_message_to_user` to provide progress updates on significant milestones.
-6. Use `create_branch` to work on a feature branch when appropriate.
 
 ## Phase 3 — Verify
 1. Run the project's test suite via `run_in_bash_session`.

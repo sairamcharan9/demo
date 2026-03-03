@@ -112,6 +112,8 @@ class TestSubmit:
             (0, "abc123def456" * 3 + "abcd", ""),  # git rev-parse (40 chars)
             (0, "", ""),                          # git push
             (0, "https://github.com/org/repo/pull/42", ""),  # gh pr create
+            (0, "", ""),                          # git checkout main
+            (0, "", ""),                          # git pull origin main
         ]
         result = await submit("feat: login", ctx_approved)
         assert result["status"] == "ok"
@@ -162,6 +164,7 @@ class TestSubmit:
         result = await submit("msg", ctx_approved)
         assert "error" in result
         assert "nothing to commit" in result["error"].lower()
+        assert "clean" in result["error"].lower()
 
     @patch("tools.communication_tools._run_git")
     async def test_stores_state_fields(self, mock_run_git, ctx_approved):
@@ -171,6 +174,8 @@ class TestSubmit:
             (0, "deadbeef" * 5, ""),
             (0, "", ""),
             (0, "https://github.com/org/repo/pull/7", ""),
+            (0, "", ""),
+            (0, "", ""),
         ]
         await submit("feat: add auth", ctx_approved)
         assert ctx_approved.state["commit_message"] == "feat: add auth"

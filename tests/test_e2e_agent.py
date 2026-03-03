@@ -36,11 +36,15 @@ REPO_URL = "https://github.com/sairamcharan9/calculator-app-assignment5"
 
 TASK = "Add a square root function to the calculator app"
 
-# Skip the entire module if no API key is set
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY not set — skipping e2e tests",
-)
+# Skip the entire module if no API key is set, AND mark as e2e so it's
+# excluded from normal test runs.  Run explicitly with: pytest -m e2e
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        not os.environ.get("GOOGLE_API_KEY"),
+        reason="GOOGLE_API_KEY not set — skipping e2e tests",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------
