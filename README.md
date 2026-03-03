@@ -6,11 +6,11 @@
 
 ## ✨ Features
 
-- **31 built-in tools** — file I/O, shell execution, git operations, web research, planning, and user communication
+- **32 built-in tools** — file I/O, shell execution, git operations, web research, planning, and user communication
 - **5-phase workflow** — Orient → Plan → Execute → Verify → Submit
 - **Plan-review gate** — the agent never writes code until the user approves the plan
 - **Auto-branch creation** — feature branches are automatically created once the plan is approved
-- **Local sandbox** — all file and shell access is confined to the `forge-scratchpad` workspace
+- **Local sandbox** — all file and shell access is confined to the `workspace/` directory
 - **Playwright support** — automated frontend verification with headless Chromium screenshots
 - **Memory service** — persists discovered facts across sessions via Vertex AI Memory Bank
 - **Session persistence** — dual-mode (InMemory for dev, VertexAI/Firestore for prod)
@@ -28,7 +28,7 @@ forge/
 │   └── agent.py              # LlmAgent definition + system prompt + callbacks
 ├── api/
 │   └── __init__.py            # FastAPI service (Week 4 — placeholder)
-├── forge-scratchpad/          # Local verification workspace
+├── workspace/                 # Local verification workspace
 ├── memory/
 │   └── vertex_memory.py       # Session & memory services (InMemory / VertexAI)
 ├── tools/
@@ -48,7 +48,7 @@ forge/
 
 ---
 
-## 🛠️ Tool Reference (31 Tools)
+## 🛠️ Tool Reference (32 Tools)
 
 ### File Tools (8)
 | Tool | Purpose |
@@ -153,8 +153,8 @@ python -m worker.main
 ```
 
 The **worker** will:
-1. Clone the repo into `WORKSPACE_ROOT/forge_scratchpad`
-2. Create a Forge agent with all 31 tools
+1. Clone the repo into `WORKSPACE_ROOT/workspace`
+2. Create a Forge agent with all 32 tools
 3. Run the 5-phase agent loop until the task is complete
 
 ---
