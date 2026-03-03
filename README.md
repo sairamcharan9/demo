@@ -213,18 +213,18 @@ All configuration is via environment variables (see `.env.example`):
 
 ## 🧪 Test Coverage
 
-| Module | Tests | Status |
-|---|---|---|
-| `file_tools.py` | 14 tests | ✅ All pass |
-| `shell_tools.py` | 10 tests | ✅ All pass |
-| `planning_tools.py` | 14 tests | ✅ All pass |
-| `communication_tools.py` | 24 tests | ✅ All pass |
-| `research_tools.py` | 16 tests | ✅ All pass |
-| `git_tools.py` | 14 tests | ✅ All pass |
-| `memory/vertex_memory.py` | 8 tests | ✅ All pass |
-| `agent/agent.py` | 14 tests | ✅ All pass |
-| `worker/main.py` | 7 tests | ✅ All pass |
-| **Total** | **172 tests** | **✅ All pass** |
+| Module | Tests | Coverage | Status |
+|---|---|---|---|
+| `file_tools.py` | 23 tests | 77% | ✅ Pass |
+| `shell_tools.py` | 12 tests | 84% | ✅ Pass |
+| `planning_tools.py` | 22 tests | 98% | ✅ Pass |
+| `communication_tools.py` | 34 tests | 84% | ✅ Pass |
+| `research_tools.py` | 23 tests | 85% | ✅ Pass |
+| `git_tools.py` | 20 tests | 81% | ✅ Pass |
+| `memory/vertex_memory.py` | 8 tests | 92% | ✅ Pass |
+| `agent/agent.py` | 23 tests | 73% | ✅ Pass |
+| `worker/main.py` | 7 tests | 70% | ✅ Pass |
+| **Total** | **172 tests** | **81%** | **✅ Pass** |
 
 ---
 
