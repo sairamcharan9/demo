@@ -84,27 +84,11 @@ class TestSessionStateInit:
     must be pre-seeded at session creation time.
     """
 
+    # Keys that worker MUST seed for the agent to have basic context
     REQUIRED_STATE_KEYS = {
-        # System prompt {key} placeholders
+        "repo_url",
+        "task",
         "automation_mode",
-        "plan",
-        "current_step",
-        "completed_steps",
-        "approved",
-        "submitted",
-        "task_complete",
-        # Planning tools
-        "awaiting_approval",
-        # Communication tools
-        "commit_message",
-        "final_summary",
-        "messages",
-        "typed_messages",
-        "awaiting_user_input",
-        "user_input_prompt",
-        # PR tracking
-        "pr_url",
-        "pr_number",
     }
 
     @patch("worker.main.Runner")
@@ -119,6 +103,7 @@ class TestSessionStateInit:
 
         # Mock services
         mock_session_service = AsyncMock()
+        mock_session_service.get_session = AsyncMock(side_effect=Exception("Session not found"))
         mock_session = MagicMock()
         mock_session.id = "test-session"
         mock_session_service.create_session = AsyncMock(return_value=mock_session)

@@ -11,6 +11,8 @@ The system prompt encodes the 5-phase workflow:
 
 import os
 import logging
+import asyncio
+import subprocess
 
 from google.adk.agents import LlmAgent
 
@@ -39,7 +41,7 @@ from tools.shell_tools import (
 from tools.planning_tools import (
     set_plan,
     plan_step_complete,
-    request_plan_review,
+    request_code_review,
     record_user_approval_for_plan,
     pre_commit_instructions,
     initiate_memory_recording,
@@ -49,27 +51,26 @@ from tools.planning_tools import (
 from tools.communication_tools import (
     message_user,
     request_user_input,
-    send_message_to_user,
     submit,
     done,
     read_pr_comments,
     reply_to_pr_comments,
 )
 
+# -- Git tools ----------------------------------------------------------------
+# (None currently)
+
 # -- Research tools -----------------------------------------------------------
 from tools.research_tools import (
-    google_search,
     view_text_website,
-    take_screenshot,
     view_image,
+    read_image_file,
 )
 
-# -- Git tools ----------------------------------------------------------------
-from tools.git_tools import (
-    make_commit,
-    create_branch,
-    create_pr,
-    watch_pr_ci_status,
+# -- Specialized tools --------------------------------------------------------
+from tools.specialized_tools import (
+    start_live_preview_instructions,
+    call_hello_world_agent,
 )
 
 
@@ -78,46 +79,46 @@ from tools.git_tools import (
 # ---------------------------------------------------------------------------
 
 ALL_TOOLS = [
-    # Phase 0 — Orient
+    # File Management
     list_files,
     read_file,
-    # Phase 0-2 — Research
-    google_search,
-    view_text_website,
-    take_screenshot,
-    view_image,
-    # Phase 1 — Plan
-    set_plan,
-    request_plan_review,
-    record_user_approval_for_plan,
-    plan_step_complete,
-    # Phase 2 — Execute
     write_file,
-    replace_with_git_merge_diff,
     delete_file,
     rename_file,
-    run_in_bash_session,
-    # Phase 3 — Verify
-    frontend_verification_instructions,
-    frontend_verification_complete,
-    pre_commit_instructions,
-    # Phase 4 — Submit
-    make_commit,
-    create_pr,
-    submit,
-    done,
-    # Utilities — available in any phase
-    message_user,
-    send_message_to_user,
-    request_user_input,
+    replace_with_git_merge_diff,
     restore_file,
     reset_all,
+
+    # Shell Execution
+    run_in_bash_session,
+
+    # Information Retrieval
+    view_text_website,
+    view_image,
+    read_image_file,
+
+    # Planning & Workflow
+    set_plan,
+    plan_step_complete,
     initiate_memory_recording,
-    watch_pr_ci_status,
+    pre_commit_instructions,
+    submit,
+    request_code_review,
+
+    # Communication
+    message_user,
+    request_user_input,
+    record_user_approval_for_plan,
     read_pr_comments,
     reply_to_pr_comments,
-]
 
+    # Specialized
+    frontend_verification_instructions,
+    frontend_verification_complete,
+    start_live_preview_instructions,
+    call_hello_world_agent,
+    done,
+]
 
 # ---------------------------------------------------------------------------
 # Callbacks — ADK §8 observability and guardrails
@@ -141,39 +142,119 @@ def _infer_phase(state: dict) -> str:
     return "Phase 3 — Verify"
 
 
-async def before_model_callback(callback_context, llm_request, **kwargs):
-    """Log a state snapshot before each LLM call.
+async def before_agent_callback(callback_context):
+    """Ensure required keys exist in session state before agent logic begins."""
+    state = callback_context.state
+    
+    # Initialize missing keys to avoid prompt formatting errors
+    # We pull from environment variables where available, mirroring worker/main.py login
+    defaults = {
+        "automation_mode": os.environ.get("AUTOMATION_MODE", "NONE"),
+        "repo_url": os.environ.get("REPO_URL", ""),
+        "task": os.environ.get("TASK", ""),
+        "github_token": os.environ.get("GITHUB_TOKEN", ""),
+        "workspace": os.environ.get("WORKSPACE_ROOT", "/workspace"),
+        "approved": False,
+        "plan": [],
+        "current_step": 0,
+        "completed_steps": [],
+        "submitted": False,
+        "task_complete": False,
+        "current_branch": "main",
+        "awaiting_approval": False,
+        "commit_message": "",
+        "final_summary": "",
+        "messages": [],
+        "typed_messages": [],
+        "awaiting_user_input": False,
+        "user_input_prompt": "",
+        "pr_url": "",
+        "pr_number": 0,
+    }
+    
+    for key, val in defaults.items():
+        if key not in state:
+            state[key] = val
 
-    ADK calls this as: callback(callback_context=..., llm_request=...)
-    callback_context.state gives access to session state.
+    # --- Auto-clone repo if it doesn't exist ---
+    repo_url = state.get("repo_url")
+    workspace = state.get("workspace")
+    github_token = state.get("github_token")
+
+    if repo_url and workspace:
+        try:
+            await clone_repo(repo_url, workspace, github_token)
+        except Exception as e:
+            logger.error("Auto-clone failed in before_agent_callback: %s", e)
+            # We continue anyway, maybe tools will handle it or report error
+
+    logger.info("Before agent callback DONE. Initialized state keys: %s", state)
+    return None
+
+
+async def clone_repo(repo_url: str, workspace: str, github_token: str | None = None):
+    """Clone a git repo into the workspace directory.
+    
+    Ported from worker/main.py to make agent self-contained.
     """
+    if os.path.isdir(os.path.join(workspace, ".git")):
+        logger.info("Repo already cloned at %s — skipping clone", workspace)
+        # Configure git identity inside the workspace even if already cloned
+        for cmd in [
+            ["git", "config", "user.email", "forge@agent.dev"],
+            ["git", "config", "user.name", "Forge"],
+        ]:
+            try:
+                proc = await asyncio.create_subprocess_exec(*cmd, cwd=workspace)
+                await proc.wait()
+            except Exception:
+                pass
+        return
+
+    # Inject token for private repos: https://<token>@github.com/...
+    clone_url = repo_url
+    if github_token and "github.com" in repo_url:
+        clone_url = repo_url.replace(
+            "https://github.com",
+            f"https://{github_token}@github.com",
+        )
+
+    logger.info("Cloning %s into %s ...", repo_url, workspace)
     try:
-        state = callback_context.state
+        proc = await asyncio.create_subprocess_exec(
+            "git", "clone", "--depth=1", clone_url, workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+
+        if proc.returncode != 0:
+            err_msg = stderr.decode()
+            logger.error("git clone failed:\n%s", err_msg)
+            raise RuntimeError(f"git clone failed: {err_msg.strip()}")
+
+        # Configure git identity inside the workspace
+        for cmd in [
+            ["git", "config", "user.email", "forge@agent.dev"],
+            ["git", "config", "user.name", "Forge"],
+        ]:
+            proc = await asyncio.create_subprocess_exec(*cmd, cwd=workspace)
+            await proc.wait()
+
+        logger.info("Clone complete.")
+    except Exception as e:
+        logger.error("Exception during clone_repo: %s", e)
+        raise
+
+
+async def before_model_callback(callback_context, llm_request, **kwargs):
+    """Log a state snapshot and handle phase inference."""
+    state = callback_context.state
+    
+    try:
         phase = _infer_phase(state)
         plan = state.get("plan", [])
         step = state.get("current_step", 0)
-
-        # Auto-branch creation at the start of Execute phase
-        if phase == "Phase 2 — Execute" and state.get("approved"):
-            plan_hash = str(hash(tuple(plan))) if plan else ""
-            if plan_hash and state.get("last_branched_plan") != plan_hash:
-                import time
-                import asyncio
-                from tools.git_tools import WORKSPACE_ROOT
-                
-                # Fetch branch name set by the agent during set_plan, or fallback
-                custom_name = state.get("target_branch_name")
-                branch_name = custom_name if custom_name else f"forge-feature-{int(time.time())}"
-                
-                logger.info("Auto-creating branch for execution: %s", branch_name)
-                proc = await asyncio.create_subprocess_exec(
-                    "git", "checkout", "-b", branch_name,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=WORKSPACE_ROOT,
-                )
-                await proc.communicate()
-                state["last_branched_plan"] = plan_hash
 
         logger.info(
             "[before_model] phase=%s step=%d/%d approved=%s submitted=%s",
@@ -217,13 +298,14 @@ async def after_tool_callback(tool, args, tool_context, tool_response, **kwargs)
 SYSTEM_PROMPT = """You are Forge, an autonomous AI software engineer. You work inside a sandboxed Docker container with full access to the codebase at /workspace.
 
 ## Current Session State
-- Automation mode: {automation_mode}
-- Plan approved: {approved}
-- Plan steps: {plan}
-- Current step index: {current_step}
-- Completed steps: {completed_steps}
-- Submitted: {submitted}
-- Task complete: {task_complete}
+- Automation mode: {automation_mode?}
+- Plan approved: {approved?}
+- Plan steps: {plan?}
+- Current step index: {current_step?}
+- Completed steps: {completed_steps?}
+- Submitted: {submitted?}
+- Task complete: {task_complete?}
+- Current branch: {current_branch?}
 
 You operate in 5 strict phases. Never skip a phase.
 
@@ -232,22 +314,21 @@ You operate in 5 strict phases. Never skip a phase.
 2. Call `read_file` on key files: README, package.json/pyproject.toml, main entry points, test configs.
 3. Use `initiate_memory_recording` to save discovered facts (stack, test command, lint command, coding conventions).
 4. If you need external context, use `google_search` and `view_text_website`.
-5. Use `take_screenshot` if you need to capture a webpage's visual state.
+
 6. Use `view_image` to inspect screenshots or diagrams in the repo.
 
 ## Phase 1 — Plan
 1. Based on orientation, create a step-by-step execution plan using `set_plan`.
-2. MANDATORY: You must provide a descriptive `branch_name` (e.g., "feat/add-login") when calling `set_plan`.
-3. Each step should be atomic and testable.
-4. Call `request_plan_review` and STOP. Wait for user approval before proceeding.
-5. Do NOT write any code until the plan is approved.
+2. Each step should be atomic and testable.
+3. Call `request_code_review` and STOP. Wait for user approval before proceeding.
+4. Do NOT write any code until the plan is approved.
 
 ## Phase 2 — Execute
 1. Work through the plan step by step. Call `plan_step_complete` after each step.
 2. Prefer `replace_with_git_merge_diff` for edits to existing files — it produces clean diffs.
 3. Use `write_file` only for new files or full rewrites.
 4. Use `run_in_bash_session` to install dependencies, run intermediate checks, etc.
-5. Use `message_user` or `send_message_to_user` to provide progress updates on significant milestones.
+5. Use `message_user` to provide progress updates on significant milestones.
 
 ## Phase 3 — Verify
 1. Run the project's test suite via `run_in_bash_session`.
@@ -257,10 +338,8 @@ You operate in 5 strict phases. Never skip a phase.
 
 ## Phase 4 — Submit
 1. Call `pre_commit_instructions` and verify every item on the checklist.
-2. Call `make_commit` with a conventional commit message (e.g., "feat: add login page").
-3. Call `create_pr` if this is a feature branch that needs a PR.
-4. Call `submit` with the same commit message.
-5. Call `done` with a brief summary of what you accomplished.
+2. Call `submit` with a conventional commit message, a concise branch name, and a PR title.
+3. Call `done` with a brief summary of what you accomplished.
 
 ## Rules
 - NEVER skip the plan review step. The user MUST approve your plan.
@@ -296,10 +375,12 @@ def create_agent(
         instruction=SYSTEM_PROMPT,
         tools=ALL_TOOLS,
         description="Forge — autonomous AI software engineer",
+        before_agent_callback=before_agent_callback,
         before_model_callback=before_model_callback,
         after_tool_callback=after_tool_callback,
     )
 
     return agent
 
-
+# Export root_agent for ADK CLI discovery
+root_agent = create_agent()

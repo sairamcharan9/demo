@@ -71,14 +71,17 @@ async def request_user_input(prompt: str, tool_context: ToolContext) -> dict:
     }
 
 
-async def submit(commit_message: str, tool_context: ToolContext, workspace: str | None = None) -> dict:
+import uuid
+
+async def submit(commit_message: str, branch_name: str, pr_title: str, tool_context: ToolContext, workspace: str | None = None) -> dict:
     """Submit the completed work by committing, pushing, and creating a PR.
 
     Performs the full git submission flow:
-    1. ``git add -A`` — stage all changes
-    2. ``git commit -m "<message>"`` — create the commit
-    3. ``git push origin HEAD`` — push to remote
-    4. ``gh pr create`` — open a PR (if not already on main/master)
+    1. ``git checkout -b <branch_name>-<session_id>``
+    2. ``git add -A`` — stage all changes
+    3. ``git commit -m "<message>"`` — create the commit
+    4. ``git push -u origin <full_branch_name>`` — push to remote
+    5. ``gh pr create`` — open a PR (if not already on main/master)
 
     Verifies the plan is approved and all steps are complete before allowing
     submission. The agent should call ``pre_commit_instructions()`` and
@@ -86,6 +89,10 @@ async def submit(commit_message: str, tool_context: ToolContext, workspace: str 
     """
     if not commit_message or not commit_message.strip():
         return {"error": "Commit message must not be empty"}
+    if not branch_name or not branch_name.strip():
+        return {"error": "Branch name must not be empty"}
+    if not pr_title or not pr_title.strip():
+        return {"error": "PR title must not be empty"}
 
     # Check plan approval
     if not tool_context.state.get("approved", False):
@@ -99,26 +106,43 @@ async def submit(commit_message: str, tool_context: ToolContext, workspace: str 
         return {"error": f"Cannot submit — {remaining} plan step(s) still incomplete."}
 
     ws = workspace or WORKSPACE_ROOT
+    
+    # Get session ID safely
+    session_id = getattr(tool_context, "session_id", None)
+    if not session_id:
+        session_id = uuid.uuid4().hex[:8]
+        
+    # Construct full branch name safely removing invalid characters
+    clean_branch = re.sub(r'[^a-zA-Z0-9_-]', '-', branch_name)
+    full_branch_name = f"{clean_branch}-{session_id}"
 
     try:
-        # 1. Stage all changes
+        # 1. Checkout new branch
+        rc, _, err = await _run_git(["git", "checkout", "-b", full_branch_name], ws)
+        if rc != 0:
+            return {"error": f"git checkout -b failed: {err}"}
+        
+        # Update session state with the new branch name
+        tool_context.state["current_branch"] = full_branch_name
+
+        # 2. Stage all changes
         rc, _, err = await _run_git(["git", "add", "-A"], ws)
         if rc != 0:
             return {"error": f"git add failed: {err}"}
 
-        # 2. Commit
+        # 3. Commit
         rc, out, err = await _run_git(["git", "commit", "-m", commit_message], ws)
         if rc != 0:
             if "nothing to commit" in err or "nothing to commit" in out:
                 return {"error": "Nothing to commit — working tree is clean. Make changes before submitting."}
             return {"error": f"git commit failed: {err}"}
 
-        # 3. Get commit SHA
+        # 4. Get commit SHA
         rc, sha, _ = await _run_git(["git", "rev-parse", "HEAD"], ws, timeout=10)
 
-        # 4. Push to remote
+        # 5. Push to remote
         rc, out, err = await _run_git(
-            ["git", "push", "origin", "HEAD"], ws, timeout=60
+            ["git", "push", "-u", "origin", full_branch_name], ws, timeout=60
         )
         if rc != 0:
             # Push failed — still record the commit but report the push error
@@ -132,12 +156,13 @@ async def submit(commit_message: str, tool_context: ToolContext, workspace: str 
                 "message": "Commit created but push failed. Check remote configuration.",
             }
 
-        # 5. Create PR via gh CLI
+        # 6. Create PR via gh CLI
         pr_url = ""
         pr_number = 0
+        pr_error = ""
         rc, out, err = await _run_git(
-            ["gh", "pr", "create", "--title", commit_message,
-             "--body", f"Automated PR by Forge.\n\nCommit: {sha}"],
+            ["gh", "pr", "create", "--base", "main", "--head", full_branch_name, 
+             "--title", pr_title, "--body", f"Automated PR by Forge.\n\nCommit: {sha}"],
             ws, timeout=60,
         )
         if rc == 0:
@@ -145,6 +170,8 @@ async def submit(commit_message: str, tool_context: ToolContext, workspace: str 
             match = re.search(r"/pull/(\d+)", pr_url)
             if match:
                 pr_number = int(match.group(1))
+        else:
+            pr_error = err
 
         # 6. Reset workspace to main for the next task
         await _run_git(["git", "checkout", "main"], ws)
@@ -172,7 +199,7 @@ async def submit(commit_message: str, tool_context: ToolContext, workspace: str 
         result["pr_number"] = pr_number
         result["message"] = f"Work submitted. PR created: {pr_url}"
     else:
-        result["message"] = "Work submitted and pushed. PR creation skipped or failed."
+        result["message"] = f"Work submitted and pushed. PR creation failed. git error: {pr_error}"
 
     return result
 
@@ -199,37 +226,6 @@ async def done(summary: str, tool_context: ToolContext) -> dict:
         "message": "Task marked as complete.",
     }
 
-
-async def send_message_to_user(
-    message: str, message_type: str = "progress", tool_context: ToolContext = None
-) -> dict:
-    """Send a typed status message to the user.
-
-    Like ``message_user`` but includes a ``message_type`` field that maps to
-    different AG-UI event severities in production:
-    - "progress" — normal update (default)
-    - "warning"  — something the user should be aware of
-    - "error"    — a problem occurred
-
-    Appends to ``typed_messages`` list in session state.
-    """
-    if not message or not message.strip():
-        return {"error": "Message must not be empty"}
-
-    valid_types = ("progress", "warning", "error")
-    if message_type not in valid_types:
-        return {"error": f"Invalid message_type '{message_type}'. Must be one of: {', '.join(valid_types)}"}
-
-    if tool_context is not None:
-        typed_messages = tool_context.state.get("typed_messages", [])
-        typed_messages.append({"message": message, "type": message_type})
-        tool_context.state["typed_messages"] = typed_messages
-
-    return {
-        "status": "ok",
-        "message": message,
-        "message_type": message_type,
-    }
 
 
 async def read_pr_comments(

@@ -42,7 +42,7 @@ class TestCreateAgent:
 
     def test_has_tools(self):
         agent = create_agent()
-        assert len(agent.tools) == 31
+        assert len(agent.tools) == 28
 
     def test_has_instruction(self):
         agent = create_agent()
@@ -61,16 +61,20 @@ class TestCreateAgent:
 
 class TestAllTools:
     def test_tool_count(self):
-        assert len(ALL_TOOLS) == 31
+        assert len(ALL_TOOLS) == 28
 
     def test_all_tools_are_callable(self):
+        from google.adk.tools import BaseTool
         for tool in ALL_TOOLS:
-            assert callable(tool), f"{tool} is not callable"
+            # ADK tools are objects, raw tools are callables
+            assert callable(tool) or isinstance(tool, BaseTool), f"{tool} is neither callable nor a BaseTool"
 
     def test_all_tools_are_async(self):
         import asyncio
+        from google.adk.tools import BaseTool
         for tool in ALL_TOOLS:
-            assert asyncio.iscoroutinefunction(tool), f"{tool.__name__} is not async"
+            if not isinstance(tool, BaseTool):
+                assert asyncio.iscoroutinefunction(tool), f"{tool.__name__} is not async"
 
 
 class TestSystemPrompt:
@@ -80,8 +84,8 @@ class TestSystemPrompt:
 
     def test_mentions_key_tools(self):
         key_tools = [
-            "list_files", "read_file", "set_plan", "request_plan_review",
-            "write_file", "run_in_bash_session", "make_commit", "submit", "done",
+            "list_files", "read_file", "set_plan", "request_code_review",
+            "write_file", "run_in_bash_session", "submit", "done",
         ]
         for tool_name in key_tools:
             assert tool_name in SYSTEM_PROMPT, f"{tool_name} not in system prompt"
@@ -142,6 +146,7 @@ class TestStateInjectionKeys:
             "approved", "submitted", "task_complete", "awaiting_approval",
             "commit_message", "final_summary", "messages", "typed_messages",
             "awaiting_user_input", "user_input_prompt", "pr_url", "pr_number",
+            "current_branch",
         }
 
         missing = placeholders - valid_state_keys

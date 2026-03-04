@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tools.planning_tools import (
     set_plan,
     plan_step_complete,
-    request_plan_review,
+    request_code_review,
     record_user_approval_for_plan,
     pre_commit_instructions,
     initiate_memory_recording,
@@ -105,22 +105,22 @@ class TestPlanStepComplete:
 
 
 # ---------------------------------------------------------------------------
-# request_plan_review
+# request_code_review
 # ---------------------------------------------------------------------------
 
 
 class TestRequestPlanReview:
     async def test_sets_awaiting(self, ctx_with_plan):
-        result = await request_plan_review(ctx_with_plan)
+        result = await request_code_review(ctx_with_plan)
         assert result["status"] == "awaiting_approval"
         assert ctx_with_plan.state["awaiting_approval"] is True
 
     async def test_returns_plan(self, ctx_with_plan):
-        result = await request_plan_review(ctx_with_plan)
+        result = await request_code_review(ctx_with_plan)
         assert result["plan"] == ctx_with_plan.state["plan"]
 
     async def test_no_plan(self, ctx):
-        result = await request_plan_review(ctx)
+        result = await request_code_review(ctx)
         assert "error" in result
 
 
@@ -131,7 +131,7 @@ class TestRequestPlanReview:
 
 class TestRecordUserApproval:
     async def test_approves(self, ctx_with_plan):
-        await request_plan_review(ctx_with_plan)
+        await request_code_review(ctx_with_plan)
         result = await record_user_approval_for_plan(ctx_with_plan)
         assert result["approved"] is True
         assert ctx_with_plan.state["approved"] is True

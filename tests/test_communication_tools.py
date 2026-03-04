@@ -16,7 +16,6 @@ from tests.conftest import MockToolContext
 from tools.communication_tools import (
     message_user,
     request_user_input,
-    send_message_to_user,
     submit,
     done,
     read_pr_comments,
@@ -207,48 +206,6 @@ class TestDone:
         assert "error" in result
 
 
-# ---------------------------------------------------------------------------
-# send_message_to_user
-# ---------------------------------------------------------------------------
-
-
-class TestSendMessageToUser:
-    async def test_sends_progress_message(self, ctx):
-        result = await send_message_to_user("Building...", "progress", ctx)
-        assert result["status"] == "ok"
-        assert result["message_type"] == "progress"
-        assert ctx.state["typed_messages"][0]["type"] == "progress"
-
-    async def test_sends_warning_message(self, ctx):
-        result = await send_message_to_user("Deprecated API", "warning", ctx)
-        assert result["status"] == "ok"
-        assert result["message_type"] == "warning"
-
-    async def test_sends_error_message(self, ctx):
-        result = await send_message_to_user("Build failed", "error", ctx)
-        assert result["status"] == "ok"
-        assert result["message_type"] == "error"
-
-    async def test_default_type_is_progress(self, ctx):
-        result = await send_message_to_user("Update", tool_context=ctx)
-        assert result["message_type"] == "progress"
-
-    async def test_invalid_type_rejected(self, ctx):
-        result = await send_message_to_user("msg", "critical", ctx)
-        assert "error" in result
-
-    async def test_empty_message_rejected(self, ctx):
-        result = await send_message_to_user("", "progress", ctx)
-        assert "error" in result
-
-    async def test_accumulates_typed_messages(self, ctx):
-        await send_message_to_user("A", "progress", ctx)
-        await send_message_to_user("B", "warning", ctx)
-        assert len(ctx.state["typed_messages"]) == 2
-
-    async def test_works_without_tool_context(self):
-        result = await send_message_to_user("msg", "progress", tool_context=None)
-        assert result["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------

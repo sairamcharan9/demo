@@ -174,21 +174,26 @@ async def replace_with_git_merge_diff(
         stdout, stderr = await asyncio.wait_for(proc.communicate(input=diff.encode()), timeout=30)
         if proc.returncode != 0:
             # Fallback: try with patch command
-            proc2 = await asyncio.create_subprocess_exec(
-                "patch", "-p1", "--no-backup-if-mismatch",
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=ws,
-            )
-            stdout2, stderr2 = await asyncio.wait_for(proc2.communicate(input=diff.encode()), timeout=30)
-            if proc2.returncode != 0:
+            try:
+                proc2 = await asyncio.create_subprocess_exec(
+                    "patch", "-p1", "--no-backup-if-mismatch",
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=ws,
+                )
+                stdout2, stderr2 = await asyncio.wait_for(proc2.communicate(input=diff.encode()), timeout=30)
+                if proc2.returncode != 0:
+                    return {
+                        "error": f"git apply and patch both failed.\\nGit error: {stderr.decode().strip()}\\nPatch error: {stderr2.decode().strip()}",
+                    }
+            except FileNotFoundError:
+                # Patch command not found (e.g., on Windows), return the original git apply error
                 return {
-                    "error": f"Patch failed: {stderr2.decode().strip()}",
-                    "stdout": stdout2.decode().strip(),
+                    "error": f"git apply failed and 'patch' is not installed.\\nGit error: {stderr.decode().strip()}",
                 }
     except FileNotFoundError:
-        return {"error": "Neither 'git' nor 'patch' command found on system"}
+        return {"error": "'git' command not found on system"}
     except asyncio.TimeoutError:
         return {"error": "Patch command timed out after 30s"}
 

@@ -12,6 +12,7 @@ All tools are async for ADK parallelisation.
 import asyncio
 import base64
 import os
+from urllib.parse import urlparse
 
 import aiofiles
 import httpx
@@ -25,70 +26,6 @@ WORKSPACE_ROOT = os.environ.get("WORKSPACE_ROOT", "/workspace")
 # Max response size for view_text_website — 50KB of text
 MAX_TEXT_BYTES = 50_000
 
-
-async def google_search(
-    query: str,
-    num_results: int = 5,
-    tool_context: ToolContext = None,
-    workspace: str | None = None,
-) -> dict:
-    """Search the web via Google Custom Search JSON API.
-
-    Returns a list of results with ``title``, ``link``, and ``snippet``.
-
-    Requires env vars:
-    - ``GOOGLE_SEARCH_API_KEY``
-    - ``GOOGLE_SEARCH_CX`` (Custom Search Engine ID)
-    """
-    if not query or not query.strip():
-        return {"error": "Query must not be empty"}
-
-    api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
-    cx = os.environ.get("GOOGLE_SEARCH_CX")
-
-    if not api_key or not cx:
-        return {
-            "error": "Google Search not configured. "
-            "Set GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX environment variables."
-        }
-
-    num_results = max(1, min(num_results, 10))  # API allows 1-10
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                "https://www.googleapis.com/customsearch/v1",
-                params={
-                    "key": api_key,
-                    "cx": cx,
-                    "q": query,
-                    "num": num_results,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.TimeoutException:
-        return {"error": "Google Search request timed out"}
-    except httpx.HTTPStatusError as exc:
-        return {"error": f"Google Search HTTP error: {exc.response.status_code}"}
-    except Exception as exc:
-        return {"error": f"Google Search failed: {str(exc)}"}
-
-    items = data.get("items", [])
-    results = [
-        {
-            "title": item.get("title", ""),
-            "link": item.get("link", ""),
-            "snippet": item.get("snippet", ""),
-        }
-        for item in items
-    ]
-
-    return {
-        "results": results,
-        "total_results": data.get("searchInformation", {}).get("totalResults", "0"),
-        "query": query,
-    }
 
 
 async def view_text_website(
@@ -156,17 +93,15 @@ def _resolve_safe_path(relative_path: str, workspace: str | None = None) -> str:
     return resolved
 
 
-async def take_screenshot(
+async def view_image(
     url: str,
-    output_filename: str = "screenshot.png",
     tool_context: ToolContext = None,
     workspace: str | None = None,
 ) -> dict:
-    """Capture a screenshot of a URL using Playwright headless Chromium.
+    """Load and analyze an image from a URL.
 
-    Saves the screenshot to /workspace/screenshots/<output_filename> and
-    returns the base64-encoded PNG. Requires Playwright + Chromium to be
-    installed in the container.
+    Fetches the image and returns a base64 string.
+    Max file size: 10MB.
     """
     if not url or not url.strip():
         return {"error": "URL must not be empty"}
@@ -174,57 +109,38 @@ async def take_screenshot(
     if not url.startswith(("http://", "https://")):
         return {"error": "URL must start with http:// or https://"}
 
-    ws = workspace or WORKSPACE_ROOT
-    screenshot_dir = os.path.join(ws, "screenshots")
-    os.makedirs(screenshot_dir, exist_ok=True)
-    output_path = os.path.join(screenshot_dir, output_filename)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            raw = resp.content
+    except httpx.TimeoutException:
+        return {"error": f"Request to {url} timed out"}
+    except httpx.HTTPStatusError as exc:
+        return {"error": f"HTTP error {exc.response.status_code} for {url}"}
+    except Exception as exc:
+        return {"error": f"Failed to fetch {url}: {str(exc)}"}
+
+    if len(raw) > 10 * 1024 * 1024:
+        return {"error": f"Image at URL {url} is too large ({len(raw)} bytes). Max 10MB."}
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "python3", "-c",
-            f"""
-from playwright.sync_api import sync_playwright
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page(viewport={{'width': 1280, 'height': 720}})
-    page.goto("{url}", wait_until="networkidle", timeout=30000)
-    page.screenshot(path="{output_path}", full_page=True)
-    browser.close()
-""",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-
-        if proc.returncode != 0:
-            return {"error": f"Screenshot failed: {stderr.decode().strip()}"}
-
-    except asyncio.TimeoutError:
-        return {"error": "Screenshot timed out after 60s"}
-    except FileNotFoundError:
-        return {"error": "python3 not found — cannot run Playwright"}
-
-    # Read and encode the screenshot
-    if not os.path.isfile(output_path):
-        return {"error": f"Screenshot file not created at {output_path}"}
-
-    try:
-        async with aiofiles.open(output_path, "rb") as f:
-            raw = await f.read()
         encoded = base64.b64encode(raw).decode("ascii")
     except Exception as exc:
-        return {"error": f"Failed to read screenshot: {str(exc)}"}
+        return {"error": f"Failed to encode image from URL: {str(exc)}"}
+
+    content_type = resp.headers.get("content-type", "application/octet-stream")
 
     return {
         "status": "ok",
-        "path": output_path,
+        "url": url,
         "base64": encoded,
         "size_bytes": len(raw),
-        "url": url,
+        "mime_type": content_type,
     }
 
 
-async def view_image(
+async def read_image_file(
     path: str,
     tool_context: ToolContext = None,
     workspace: str | None = None,

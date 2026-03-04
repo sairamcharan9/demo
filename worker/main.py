@@ -1,7 +1,7 @@
 """
 Forge Worker — Docker container entry point.
 
-1. Read env vars (REPO_URL, TASK, SESSION_ID, USER_ID, AUTOMATION_MODE)
+1. Read env vars (REPO_URL, TASK, USER_ID, AUTOMATION_MODE)
 2. Clone the repo into /workspace
 3. Create session + memory services
 4. Create the agent
@@ -14,6 +14,7 @@ import asyncio
 import logging
 import time
 import argparse
+import uuid
 
 from dotenv import load_dotenv
 
@@ -46,66 +47,27 @@ AUTOMATION_MODES = {"NONE", "AUTO_APPROVE", "AUTO_CREATE_PR"}
 
 
 # ---------------------------------------------------------------------------
-# Git clone
-# ---------------------------------------------------------------------------
-
-
-async def clone_repo(repo_url: str, workspace: str, github_token: str | None = None):
-    """Clone a git repo into the workspace directory.
-
-    If a GitHub token is provided, it's injected into the clone URL for
-    private repo access.
-    """
-    if os.path.isdir(os.path.join(workspace, ".git")):
-        logger.info("Repo already cloned at %s — skipping clone", workspace)
-        return
-
-    # Inject token for private repos: https://<token>@github.com/...
-    clone_url = repo_url
-    if github_token and "github.com" in repo_url:
-        clone_url = repo_url.replace(
-            "https://github.com",
-            f"https://{github_token}@github.com",
-        )
-
-    logger.info("Cloning %s into %s ...", repo_url, workspace)
-    proc = await asyncio.create_subprocess_exec(
-        "git", "clone", "--depth=1", clone_url, workspace,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-
-    if proc.returncode != 0:
-        logger.error("git clone failed:\n%s", stderr.decode())
-        raise RuntimeError(f"git clone failed: {stderr.decode().strip()}")
-
-    # Configure git identity inside the workspace
-    for cmd in [
-        ["git", "config", "user.email", "forge@agent.dev"],
-        ["git", "config", "user.name", "Forge"],
-    ]:
-        await asyncio.create_subprocess_exec(*cmd, cwd=workspace)
-
-    logger.info("Clone complete.")
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 
-async def run_worker(task_arg: str | None = None):
+async def run_worker(task_arg: str | None = None, session_id_arg: str | None = None):
     """Main worker loop: clone, create agent, run task."""
 
     # --- Read config from env ---
     repo_url = os.environ.get("REPO_URL")
     task = task_arg or os.environ.get("TASK")
-    session_id = os.environ.get("SESSION_ID", "default-session")
     user_id = os.environ.get("USER_ID", "default-user")
     github_token = os.environ.get("GITHUB_TOKEN")
     workspace = os.environ.get("WORKSPACE_ROOT", "/workspace")
     automation_mode = os.environ.get("AUTOMATION_MODE", "NONE")
+
+    # Session ID: arg > env > random uuid
+    session_id = (
+        session_id_arg or 
+        os.environ.get("SESSION_ID") or 
+        str(uuid.uuid4())
+    )
 
     if automation_mode not in AUTOMATION_MODES:
         logger.warning(
@@ -127,9 +89,6 @@ async def run_worker(task_arg: str | None = None):
     logger.info("User:     %s", user_id)
     logger.info("Mode:     %s", automation_mode)
 
-    # --- Clone repo ---
-    await clone_repo(repo_url, workspace, github_token)
-
     # --- Services ---
     session_service, memory_service = create_services()
 
@@ -145,38 +104,28 @@ async def run_worker(task_arg: str | None = None):
         memory_service=memory_service,
     )
 
-    # --- Create session with pre-initialized state ---
-    # Every key referenced by {key} in the system prompt AND every key
-    # that tools read/write must be pre-seeded here so ADK injection works
-    # from the very first turn (ADK §3.3).
-    session = await session_service.create_session(
-        app_name="forge",
-        user_id=user_id,
-        state={
-            # Identity
-            "automation_mode": automation_mode,
-            # Plan lifecycle (planning_tools.py reads/writes these)
-            "plan": [],
-            "current_step": 0,
-            "completed_steps": [],
-            "approved": False,
-            "awaiting_approval": False,
-            # Submission lifecycle (communication_tools.py)
-            "submitted": False,
-            "commit_message": "",
-            "task_complete": False,
-            "final_summary": "",
-            # Communication
-            "messages": [],
-            "typed_messages": [],
-            "awaiting_user_input": False,
-            "user_input_prompt": "",
-            # PR tracking (git_tools.py / communication_tools.py)
-            "pr_url": "",
-            "pr_number": 0,
-        },
-    )
-    logger.info("Session created: %s", session.id)
+    # --- Create or Resume Session ---
+    try:
+        session = await session_service.get_session(
+            app_name="forge",
+            user_id=user_id,
+            session_id=session_id
+        )
+        logger.info("Resuming existing session: %s", session.id)
+    except Exception:
+        # Create session with minimal state. 
+        # The before_agent_callback in agent.py will populate the rest.
+        session = await session_service.create_session(
+            app_name="forge",
+            user_id=user_id,
+            session_id=session_id,
+            state={
+                "repo_url": repo_url,
+                "task": task,
+                "automation_mode": automation_mode,
+            },
+        )
+        logger.info("Created new session: %s", session.id)
 
     # --- Inject auto-approval for AUTO_APPROVE / AUTO_CREATE_PR ---
     if automation_mode in ("AUTO_APPROVE", "AUTO_CREATE_PR"):
@@ -251,8 +200,9 @@ def main():
     """Sync entry point for Docker CMD."""
     parser = argparse.ArgumentParser(description="Forge Agent Worker")
     parser.add_argument("task", nargs="?", default=None, help="Task description for the agent")
+    parser.add_argument("--session-id", help="Session ID to resume")
     args = parser.parse_args()
-    asyncio.run(run_worker(args.task))
+    asyncio.run(run_worker(args.task, args.session_id))
 
 
 if __name__ == "__main__":

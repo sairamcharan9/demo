@@ -18,13 +18,13 @@ from google.adk.tools import ToolContext
 
 
 async def set_plan(
-    steps: list[str], tool_context: ToolContext = None, branch_name: str = ""
+    steps: list[str], tool_context: ToolContext = None
 ) -> dict:
     """Write the execution plan to session state.
 
     Sets ``plan`` (list of step descriptions) and ``current_step`` to 0.
-    If ``branch_name`` is provided (e.g., 'feat/add-foo'), the system will
-    automatically create and checkout this branch before Phase 2 begins.
+    Branch creation is handled separately by the agent calling
+    ``create_branch`` at the start of Phase 2.
     Emits AG-UI STATE_DELTA in production.
     """
     if not steps:
@@ -34,15 +34,11 @@ async def set_plan(
     tool_context.state["current_step"] = 0
     tool_context.state["completed_steps"] = []
     tool_context.state["approved"] = False
-    
-    if branch_name:
-        tool_context.state["target_branch_name"] = branch_name
 
     return {
         "status": "ok",
         "total_steps": len(steps),
         "plan": steps,
-        "branch_name": branch_name,
     }
 
 
@@ -78,7 +74,7 @@ async def plan_step_complete(step_index: int, summary: str, tool_context: ToolCo
     }
 
 
-async def request_plan_review(tool_context: ToolContext) -> dict:
+async def request_code_review(tool_context: ToolContext) -> dict:
     """Pause the agent and request user approval for the current plan.
 
     Sets ``awaiting_approval`` to True. In production this emits an

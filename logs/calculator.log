@@ -1,0 +1,16 @@
+2026-03-04 01:35:17 | INFO     | calculator.repl | Calculator initializing with config: CalculatorConfig(log_dir='logs', log_file='calculator.log', history_dir='data', history_file='history.csv', max_history_size=1000, auto_save=True, precision=2, max_input_value=10000000000.0, default_encoding='utf-8')
+2026-03-04 01:35:17 | INFO     | calculator.history | New calculation recorded: 10 + 5 = 15.00
+2026-03-04 01:35:17 | INFO     | calculator.repl | Calculation successful: 10 + 5 = 15.00 -> 15.00
+2026-03-04 01:35:17 | INFO     | calculator.history | New calculation recorded: 20 - 8 = 12.00
+2026-03-04 01:35:17 | INFO     | calculator.repl | Calculation successful: 20 - 8 = 12.00 -> 12.00
+2026-03-04 01:35:17 | INFO     | calculator.history | New calculation recorded: 4 * 3 = 12.00
+2026-03-04 01:35:17 | INFO     | calculator.repl | Calculation successful: 4 * 3 = 12.00 -> 12.00
+2026-03-04 01:35:17 | INFO     | calculator.history | New calculation recorded: 10 / 2 = 5.00
+2026-03-04 01:35:17 | INFO     | calculator.repl | Calculation successful: 10 / 2 = 5.00 -> 5.00
+2026-03-04 01:35:17 | INFO     | calculator.history | New calculation recorded: 2 ^ 3 = 8.00
+2026-03-04 01:35:17 | INFO     | calculator.repl | Calculation successful: 2 ^ 3 = 8.00 -> 8.00
+2026-03-04 01:35:17 | INFO     | calculator.history | New calculation recorded: 10 % 3 = 1.00
+2026-03-04 01:35:17 | INFO     | calculator.repl | Calculation successful: 10 % 3 = 1.00 -> 1.00
+2026-03-04 01:35:17 | INFO     | calculator.repl | Undo successful. History size: 5
+2026-03-04 01:35:17 | INFO     | calculator.repl | Redo successful. History size: 6
+2026-03-04 01:35:17 | INFO     | calculator.repl | History cleared.

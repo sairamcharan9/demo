@@ -69,42 +69,33 @@ forge/
 | `frontend_verification_instructions` | Return Playwright test instructions |
 | `frontend_verification_complete` | Read and return verification screenshots |
 
-### Planning Tools (6)
+### Planning Tools
 | Tool | Purpose |
 |---|---|
 | `set_plan` | Write execution plan to session state |
 | `plan_step_complete` | Mark a step as done, advance to next |
-| `request_plan_review` | Pause and wait for user approval |
+| `request_code_review` | Pause and wait for user approval |
 | `record_user_approval_for_plan` | Record plan approval |
 | `pre_commit_instructions` | Return pre-submit checklist |
 | `initiate_memory_recording` | Persist a discovered fact |
 
-### Communication Tools (7)
+### Communication Tools
 | Tool | Purpose |
 |---|---|
 | `message_user` | Send a status message |
 | `request_user_input` | Ask a question, wait for response |
-| `send_message_to_user` | Typed message (progress/warning/error) |
 | `submit` | Full git submission flow (commit + push + PR) |
 | `done` | Signal task completion |
 | `read_pr_comments` | Fetch PR review comments |
 | `reply_to_pr_comments` | Post a comment on a PR |
 
-### Research Tools (4)
+### Research Tools
 | Tool | Purpose |
 |---|---|
 | `google_search` | Search via Google Custom Search API |
 | `view_text_website` | Fetch URL and extract readable text |
-| `take_screenshot` | Capture URL screenshot via Playwright |
-| `view_image` | Read image file and return base64 |
-
-### Git Tools (4)
-| Tool | Purpose |
-|---|---|
-| `make_commit` | Stage all + commit with message |
-| `create_branch` | Create and switch to new branch |
-| `create_pr` | Create GitHub PR via `gh` CLI |
-| `watch_pr_ci_status` | Check CI status for a PR |
+| `view_image` | Fetch and analyze an image URL |
+| `read_image_file` | Read an image file and return base64 |
 
 ---
 
@@ -146,11 +137,12 @@ python -m pytest tests/ --ignore=tests/test_e2e_agent.py -v
 ```bash
 export REPO_URL=https://github.com/owner/repo
 export TASK="Add dark-mode toggle to the settings page"
-export SESSION_ID=$(uuidgen)
 export USER_ID=dev
 
 python -m worker.main
 ```
+
+> **Note:** A unique `SESSION_ID` is generated automatically (via `uuid4`) on every run — no need to set it manually.
 
 The **worker** will:
 1. Clone the repo into `WORKSPACE_ROOT/workspace`
@@ -170,7 +162,7 @@ All configuration is via environment variables (see `.env.example`):
 | `REPO_URL` | ✅ | Target repository URL |
 | `TASK` | ✅ | Natural-language task description |
 | `GITHUB_TOKEN` | ✅ | GitHub PAT for clone/push |
-| `SESSION_ID` | — | Unique session identifier |
+| `SESSION_ID` | — | *(auto-generated)* Unique session identifier created at runtime |
 | `USER_ID` | — | User identifier |
 | `AUTOMATION_MODE` | — | `NONE` (default) · `AUTO_APPROVE` · `AUTO_CREATE_PR` |
 | `SERVICE_MODE` | — | `dev` (InMemory) or `prod` (VertexAI/Firestore) |
