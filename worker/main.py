@@ -3,9 +3,8 @@ Forge Worker — Docker container entry point.
 
 1. Read env vars (REPO_URL, TASK, USER_ID, AUTOMATION_MODE)
 2. Clone the repo into /workspace
-3. Create session + memory services
-4. Create the agent
-5. Run the agent loop via ADK Runner
+3. Create an InMemoryRunner from the App (auto-creates services)
+4. Run the agent loop via ADK Runner
 """
 
 import os
@@ -16,34 +15,102 @@ import time
 import argparse
 import uuid
 
+# Configure logging BEFORE any ADK imports — basicConfig is a no-op if root
+# logger already has handlers, so it MUST come before imports that create loggers.
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("worker")
+
 from dotenv import load_dotenv
 
 # Load .env for local runs (no-op in Docker if .env doesn't exist)
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from google.adk.runners import Runner
+from google.adk.runners import InMemoryRunner
 from google.genai.types import Content, Part
 
 # Add project root to path so tools/ and agent/ are importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agent.agent import create_agent
-from memory.vertex_memory import create_services
 
+# Enable ProactorEventLoop on Windows for async subprocesses
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+from google.adk.apps import App, ResumabilityConfig
+
+# ---------------------------------------------------------------------------
+# ADK Web App Definition
+# ---------------------------------------------------------------------------
+
+# Wrap the agent in an App so 'adk web worker/main.py' finds it easily
+app = App(
+    name="forge",
+    root_agent=create_agent(),
+    resumability_config=ResumabilityConfig(is_resumable=True),
 )
-logger = logging.getLogger("worker")
 
 
 # ---------------------------------------------------------------------------
 # Automation mode
 # ---------------------------------------------------------------------------
 
-
 AUTOMATION_MODES = {"NONE", "AUTO_APPROVE", "AUTO_CREATE_PR"}
+
+
+# ---------------------------------------------------------------------------
+# Initial session state — all keys seeded upfront at session creation
+# ---------------------------------------------------------------------------
+
+# User-level facts (persistent across sessions for the same user/repo)
+USER_DEFAULTS = {
+    "user:automation_mode": os.environ.get("AUTOMATION_MODE", "NONE"),
+    "user:branch": os.environ.get("branch", os.environ.get("BRANCH", "main")).strip(),
+    "user:stack": "",
+    "user:test_command": "",
+    "user:run_command": "",
+}
+
+# Session-level workflow state (scoped to current session)
+SESSION_DEFAULTS = {
+    "approved": False,
+    "plan": [],
+    "current_step": 0,
+    "completed_steps": [],
+    "submitted": False,
+    "task_complete": False,
+    "current_branch": "main",
+    "awaiting_approval": False,
+    "commit_message": "",
+    "final_summary": "",
+    "messages": [],
+    "typed_messages": [],
+    "awaiting_user_input": False,
+    "user_input_prompt": "",
+    "pr_url": "",
+    "pr_number": 0,
+}
+
+
+def build_initial_state(repo_url: str, automation_mode: str) -> dict:
+    """Build the full initial session state dict.
+
+    Merges USER_DEFAULTS + SESSION_DEFAULTS + runtime config.
+    List values are copied so each session gets its own mutable list.
+    """
+    state = {}
+    for key, val in USER_DEFAULTS.items():
+        state[key] = val
+    for key, val in SESSION_DEFAULTS.items():
+        state[key] = val.copy() if isinstance(val, list) else val
+    # Runtime overrides
+    state["repo_url"] = repo_url
+    state["automation_mode"] = automation_mode
+    state["user:automation_mode"] = automation_mode
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -52,11 +119,10 @@ AUTOMATION_MODES = {"NONE", "AUTO_APPROVE", "AUTO_CREATE_PR"}
 
 
 async def run_worker(task_arg: str | None = None, session_id_arg: str | None = None):
-    """Main worker loop: clone, create agent, run task."""
+    """Main worker loop: create InMemoryRunner from App, run task."""
 
     # --- Read config from env ---
     repo_url = os.environ.get("REPO_URL")
-    task = task_arg or os.environ.get("TASK")
     user_id = os.environ.get("USER_ID", "default-user")
     github_token = os.environ.get("GITHUB_TOKEN")
     workspace = os.environ.get("WORKSPACE_ROOT", "/workspace")
@@ -78,56 +144,40 @@ async def run_worker(task_arg: str | None = None, session_id_arg: str | None = N
     if not repo_url:
         logger.error("REPO_URL env var is required")
         sys.exit(1)
-    if not task:
-        logger.error("TASK env var is required")
-        sys.exit(1)
 
     logger.info("=== Forge Worker Starting ===")
     logger.info("Repo:     %s", repo_url)
-    logger.info("Task:     %s", task[:200])
     logger.info("Session:  %s", session_id)
     logger.info("User:     %s", user_id)
     logger.info("Mode:     %s", automation_mode)
 
-    # --- Services ---
-    session_service, memory_service = create_services()
-
-    # --- Agent ---
-    agent = create_agent()
-    logger.info("Agent created: %s (model=%s)", agent.name, agent.model)
-
-    # --- Runner ---
-    runner = Runner(
-        agent=agent,
-        app_name="forge",
-        session_service=session_service,
-        memory_service=memory_service,
-    )
+    # --- Runner (dev mode) ---
+    # InMemoryRunner auto-creates InMemorySessionService, InMemoryMemoryService,
+    # and InMemoryArtifactService. Reuses the agent from the App object.
+    runner = InMemoryRunner(app=app)
+    logger.info("InMemoryRunner created from App (agent=%s)", app.root_agent.name)
 
     # --- Create or Resume Session ---
     try:
-        session = await session_service.get_session(
+        session = await runner.session_service.get_session(
             app_name="forge",
             user_id=user_id,
             session_id=session_id
         )
         logger.info("Resuming existing session: %s", session.id)
     except Exception:
-        # Create session with minimal state. 
-        # The before_agent_callback in agent.py will populate the rest.
-        session = await session_service.create_session(
+        # Create session with ALL state keys seeded upfront.
+        initial_state = build_initial_state(repo_url, automation_mode)
+        session = await runner.session_service.create_session(
             app_name="forge",
             user_id=user_id,
             session_id=session_id,
-            state={
-                "repo_url": repo_url,
-                "task": task,
-                "automation_mode": automation_mode,
-            },
+            state=initial_state,
         )
-        logger.info("Created new session: %s", session.id)
+        logger.info("Created new session: %s (state keys: %d)", session.id, len(initial_state))
 
     # --- Inject auto-approval for AUTO_APPROVE / AUTO_CREATE_PR ---
+    task = task_arg or os.environ.get("TASK", "")
     if automation_mode in ("AUTO_APPROVE", "AUTO_CREATE_PR"):
         task_with_mode = (
             f"{task}\n\n[SYSTEM: Automation mode is {automation_mode}. "

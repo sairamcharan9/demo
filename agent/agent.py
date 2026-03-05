@@ -121,174 +121,14 @@ ALL_TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Callbacks — ADK §8 observability and guardrails
+# Callbacks — imported from the canonical callbacks module
 # ---------------------------------------------------------------------------
 
-
-def _infer_phase(state: dict) -> str:
-    """Infer the current workflow phase from session state."""
-    if state.get("task_complete"):
-        return "DONE"
-    if state.get("submitted"):
-        return "Phase 4 — Submit"
-    plan = state.get("plan", [])
-    if not plan:
-        return "Phase 0 — Orient"
-    if not state.get("approved"):
-        return "Phase 1 — Plan"
-    completed = state.get("completed_steps", [])
-    if plan and len(completed) < len(plan):
-        return "Phase 2 — Execute"
-    return "Phase 3 — Verify"
-
-
-async def before_agent_callback(callback_context):
-    """Ensure required keys exist in session state before agent logic begins."""
-    state = callback_context.state
-    
-    # Initialize missing keys to avoid prompt formatting errors
-    # We pull from environment variables where available, mirroring worker/main.py login
-    defaults = {
-        "automation_mode": os.environ.get("AUTOMATION_MODE", "NONE"),
-        "repo_url": os.environ.get("REPO_URL", ""),
-        "task": os.environ.get("TASK", ""),
-        "github_token": os.environ.get("GITHUB_TOKEN", ""),
-        "workspace": os.environ.get("WORKSPACE_ROOT", "/workspace"),
-        "approved": False,
-        "plan": [],
-        "current_step": 0,
-        "completed_steps": [],
-        "submitted": False,
-        "task_complete": False,
-        "current_branch": "main",
-        "awaiting_approval": False,
-        "commit_message": "",
-        "final_summary": "",
-        "messages": [],
-        "typed_messages": [],
-        "awaiting_user_input": False,
-        "user_input_prompt": "",
-        "pr_url": "",
-        "pr_number": 0,
-    }
-    
-    for key, val in defaults.items():
-        if key not in state:
-            state[key] = val
-
-    # --- Auto-clone repo if it doesn't exist ---
-    repo_url = state.get("repo_url")
-    workspace = state.get("workspace")
-    github_token = state.get("github_token")
-
-    if repo_url and workspace:
-        try:
-            await clone_repo(repo_url, workspace, github_token)
-        except Exception as e:
-            logger.error("Auto-clone failed in before_agent_callback: %s", e)
-            # We continue anyway, maybe tools will handle it or report error
-
-    logger.info("Before agent callback DONE. Initialized state keys: %s", state)
-    return None
-
-
-async def clone_repo(repo_url: str, workspace: str, github_token: str | None = None):
-    """Clone a git repo into the workspace directory.
-    
-    Ported from worker/main.py to make agent self-contained.
-    """
-    if os.path.isdir(os.path.join(workspace, ".git")):
-        logger.info("Repo already cloned at %s — skipping clone", workspace)
-        # Configure git identity inside the workspace even if already cloned
-        for cmd in [
-            ["git", "config", "user.email", "forge@agent.dev"],
-            ["git", "config", "user.name", "Forge"],
-        ]:
-            try:
-                proc = await asyncio.create_subprocess_exec(*cmd, cwd=workspace)
-                await proc.wait()
-            except Exception:
-                pass
-        return
-
-    # Inject token for private repos: https://<token>@github.com/...
-    clone_url = repo_url
-    if github_token and "github.com" in repo_url:
-        clone_url = repo_url.replace(
-            "https://github.com",
-            f"https://{github_token}@github.com",
-        )
-
-    logger.info("Cloning %s into %s ...", repo_url, workspace)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git", "clone", "--depth=1", clone_url, workspace,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-
-        if proc.returncode != 0:
-            err_msg = stderr.decode()
-            logger.error("git clone failed:\n%s", err_msg)
-            raise RuntimeError(f"git clone failed: {err_msg.strip()}")
-
-        # Configure git identity inside the workspace
-        for cmd in [
-            ["git", "config", "user.email", "forge@agent.dev"],
-            ["git", "config", "user.name", "Forge"],
-        ]:
-            proc = await asyncio.create_subprocess_exec(*cmd, cwd=workspace)
-            await proc.wait()
-
-        logger.info("Clone complete.")
-    except Exception as e:
-        logger.error("Exception during clone_repo: %s", e)
-        raise
-
-
-async def before_model_callback(callback_context, llm_request, **kwargs):
-    """Log a state snapshot and handle phase inference."""
-    state = callback_context.state
-    
-    try:
-        phase = _infer_phase(state)
-        plan = state.get("plan", [])
-        step = state.get("current_step", 0)
-
-        logger.info(
-            "[before_model] phase=%s step=%d/%d approved=%s submitted=%s",
-            phase, step, len(plan),
-            state.get("approved", False),
-            state.get("submitted", False),
-        )
-    except Exception as exc:
-        logger.debug("[before_model] logging failed: %s", exc)
-
-    # Return None to let the model proceed normally
-    return None
-
-
-async def after_tool_callback(tool, args, tool_context, tool_response, **kwargs):
-    """Validate and log tool results after each tool call.
-
-    ADK calls this as: callback(tool=..., args=..., tool_context=..., tool_response=...)
-    """
-    try:
-        tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
-        result = tool_response if isinstance(tool_response, dict) else {}
-
-        if "error" in result:
-            logger.warning("[after_tool] %s → ERROR: %s", tool_name, str(result["error"])[:200])
-        elif "status" in result:
-            logger.info("[after_tool] %s → %s", tool_name, result["status"])
-        else:
-            logger.debug("[after_tool] %s → returned %d keys", tool_name, len(result))
-    except Exception as exc:
-        logger.debug("[after_tool] logging failed: %s", exc)
-
-    # Return None to pass tool_response through unmodified
-    return None
+from agent.callbacks import (
+    before_agent_callback,
+    before_model_callback,
+    after_tool_callback,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +192,9 @@ You operate in 5 strict phases. Never skip a phase.
 - Use `read_pr_comments` and `reply_to_pr_comments` to interact with PR review feedback.
 - Use `send_message_to_user` with type "warning" or "error" for important alerts.
 """
+
+# ------------------------------------------
+
 
 
 def create_agent(

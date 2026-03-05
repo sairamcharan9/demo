@@ -5,7 +5,7 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 from tools.planning_tools import (
     set_plan,
@@ -106,6 +106,7 @@ class TestSubmit:
     async def test_submits_when_ready(self, mock_run_git, ctx_approved):
         # Mock: git add, git commit, git rev-parse, git push, gh pr create
         mock_run_git.side_effect = [
+            (0, "", ""),                          # git checkout -b
             (0, "", ""),                          # git add
             (0, "commit ok", ""),                  # git commit
             (0, "abc123def456" * 3 + "abcd", ""),  # git rev-parse (40 chars)
@@ -114,7 +115,7 @@ class TestSubmit:
             (0, "", ""),                          # git checkout main
             (0, "", ""),                          # git pull origin main
         ]
-        result = await submit("feat: login", ctx_approved)
+        result = await submit("feat: login", "login-feature", "Add login feature", tool_context=ctx_approved)
         assert result["status"] == "ok"
         assert ctx_approved.state["submitted"] is True
         assert ctx_approved.state["commit_message"] == "feat: login"
@@ -123,7 +124,7 @@ class TestSubmit:
 
     async def test_rejects_without_approval(self, ctx):
         await set_plan(["Step 1"], ctx)
-        result = await submit("msg", ctx)
+        result = await submit("msg", "branch", "title", tool_context=ctx)
         assert "error" in result
         assert "approved" in result["error"].lower() or "plan" in result["error"].lower()
 
@@ -133,23 +134,24 @@ class TestSubmit:
         await record_user_approval_for_plan(tc)
         await plan_step_complete(0, "Done 0", tc)
         # Step 1 still incomplete
-        result = await submit("msg", tc)
+        result = await submit("msg", "branch", "title", tool_context=tc)
         assert "error" in result
         assert "incomplete" in result["error"].lower()
 
     async def test_empty_commit_message_rejected(self, ctx_approved):
-        result = await submit("", ctx_approved)
+        result = await submit("", "branch", "title", tool_context=ctx_approved)
         assert "error" in result
 
     @patch("tools.communication_tools._run_git")
     async def test_push_failure_returns_partial(self, mock_run_git, ctx_approved):
         mock_run_git.side_effect = [
+            (0, "", ""),                  # git checkout -b
             (0, "", ""),                  # git add
             (0, "ok", ""),                # git commit
             (0, "abc" * 13 + "a", ""),    # git rev-parse
             (1, "", "no remote configured"),  # git push fails
         ]
-        result = await submit("feat: test", ctx_approved)
+        result = await submit("feat: test", "test-branch", "Test PR", tool_context=ctx_approved)
         assert result["status"] == "partial"
         assert "push_error" in result
         assert ctx_approved.state["submitted"] is True
@@ -157,10 +159,11 @@ class TestSubmit:
     @patch("tools.communication_tools._run_git")
     async def test_nothing_to_commit(self, mock_run_git, ctx_approved):
         mock_run_git.side_effect = [
+            (0, "", ""),                              # git checkout -b
             (0, "", ""),                              # git add
             (1, "", "nothing to commit, working tree clean"),  # git commit
         ]
-        result = await submit("msg", ctx_approved)
+        result = await submit("msg", "branch", "title", tool_context=ctx_approved)
         assert "error" in result
         assert "nothing to commit" in result["error"].lower()
         assert "clean" in result["error"].lower()
@@ -168,15 +171,16 @@ class TestSubmit:
     @patch("tools.communication_tools._run_git")
     async def test_stores_state_fields(self, mock_run_git, ctx_approved):
         mock_run_git.side_effect = [
-            (0, "", ""),
-            (0, "ok", ""),
-            (0, "deadbeef" * 5, ""),
-            (0, "", ""),
-            (0, "https://github.com/org/repo/pull/7", ""),
-            (0, "", ""),
-            (0, "", ""),
+            (0, "", ""),                  # git checkout -b
+            (0, "", ""),                  # git add
+            (0, "ok", ""),                # git commit
+            (0, "deadbeef" * 5, ""),      # git rev-parse
+            (0, "", ""),                  # git push
+            (0, "https://github.com/org/repo/pull/7", ""), # pr create
+            (0, "", ""),                  # checkout main
+            (0, "", ""),                  # pull main
         ]
-        await submit("feat: add auth", ctx_approved)
+        await submit("feat: add auth", "auth-branch", "Add auth", tool_context=ctx_approved)
         assert ctx_approved.state["commit_message"] == "feat: add auth"
         assert ctx_approved.state["pr_number"] == 7
 
@@ -222,8 +226,8 @@ class TestReadPrComments:
         result = await read_pr_comments(-1)
         assert "error" in result
 
-    @patch("tools.communication_tools.asyncio.create_subprocess_exec")
-    async def test_successful_read(self, mock_exec):
+    @patch("tools.communication_tools.subprocess.run")
+    async def test_successful_read(self, mock_run):
         import json
         comments_data = {
             "comments": [
@@ -234,12 +238,11 @@ class TestReadPrComments:
                 }
             ]
         }
-        mock_proc = AsyncMock()
+        mock_proc = MagicMock()
         mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(
-            return_value=(json.dumps(comments_data).encode(), b"")
-        )
-        mock_exec.return_value = mock_proc
+        mock_proc.stdout = json.dumps(comments_data).encode()
+        mock_proc.stderr = b""
+        mock_run.return_value = mock_proc
 
         result = await read_pr_comments(42)
         assert result["status"] == "ok"
@@ -247,12 +250,13 @@ class TestReadPrComments:
         assert result["comments"][0]["author"] == "reviewer"
         assert result["comments"][0]["body"] == "LGTM"
 
-    @patch("tools.communication_tools.asyncio.create_subprocess_exec")
-    async def test_gh_error(self, mock_exec):
-        mock_proc = AsyncMock()
+    @patch("tools.communication_tools.subprocess.run")
+    async def test_gh_error(self, mock_run):
+        mock_proc = MagicMock()
         mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"not found"))
-        mock_exec.return_value = mock_proc
+        mock_proc.stdout = b""
+        mock_proc.stderr = b"not found"
+        mock_run.return_value = mock_proc
 
         result = await read_pr_comments(999)
         assert "error" in result
@@ -272,24 +276,26 @@ class TestReplyToPrComments:
         result = await reply_to_pr_comments(42, "")
         assert "error" in result
 
-    @patch("tools.communication_tools.asyncio.create_subprocess_exec")
-    async def test_successful_reply(self, mock_exec):
-        mock_proc = AsyncMock()
+    @patch("tools.communication_tools.subprocess.run")
+    async def test_successful_reply(self, mock_run):
+        mock_proc = MagicMock()
         mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-        mock_exec.return_value = mock_proc
+        mock_proc.stdout = b""
+        mock_proc.stderr = b""
+        mock_run.return_value = mock_proc
 
         result = await reply_to_pr_comments(42, "Thanks for the review!")
         assert result["status"] == "ok"
         assert result["pr_number"] == 42
         assert result["body"] == "Thanks for the review!"
 
-    @patch("tools.communication_tools.asyncio.create_subprocess_exec")
-    async def test_gh_error(self, mock_exec):
-        mock_proc = AsyncMock()
+    @patch("tools.communication_tools.subprocess.run")
+    async def test_gh_error_reply(self, mock_run):
+        mock_proc = MagicMock()
         mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"permission denied"))
-        mock_exec.return_value = mock_proc
+        mock_proc.stdout = b""
+        mock_proc.stderr = b"permission denied"
+        mock_run.return_value = mock_proc
 
         result = await reply_to_pr_comments(42, "reply")
         assert "error" in result

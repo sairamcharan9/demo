@@ -12,23 +12,29 @@ All tools are async for ADK parallelisation.
 import os
 import re
 import asyncio
+import subprocess
 
 from google.adk.tools import ToolContext
+from utils.workspace_utils import get_workspace
 
 
-WORKSPACE_ROOT = os.environ.get("WORKSPACE_ROOT", "/workspace")
+
 
 
 async def _run_git(args: list[str], cwd: str, timeout: int = 30) -> tuple[int, str, str]:
     """Run a git/gh command and return (returncode, stdout, stderr)."""
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=cwd,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    return proc.returncode, stdout.decode().strip(), stderr.decode().strip()
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            timeout=timeout,
+        )
+        return proc.returncode, proc.stdout.decode().strip(), proc.stderr.decode().strip()
+    except subprocess.TimeoutExpired:
+        raise asyncio.TimeoutError(f"Command {' '.join(args)} timed out after {timeout}s")
 
 
 async def message_user(message: str, tool_context: ToolContext) -> dict:
@@ -105,7 +111,7 @@ async def submit(commit_message: str, branch_name: str, pr_title: str, tool_cont
         remaining = len(plan) - len(completed)
         return {"error": f"Cannot submit — {remaining} plan step(s) still incomplete."}
 
-    ws = workspace or WORKSPACE_ROOT
+    ws = workspace or get_workspace(tool_context)
     
     # Get session ID safely
     session_id = getattr(tool_context, "session_id", None)
@@ -239,29 +245,30 @@ async def read_pr_comments(
     if not isinstance(pr_number, int) or pr_number <= 0:
         return {"error": f"Invalid PR number: {pr_number}"}
 
-    ws = workspace or WORKSPACE_ROOT
+    ws = workspace or get_workspace(tool_context)
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "gh", "pr", "view", str(pr_number),
-            "--comments", "--json", "comments",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["gh", "pr", "view", str(pr_number), "--comments", "--json", "comments"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             cwd=ws,
+            timeout=30,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
 
         if proc.returncode != 0:
-            return {"error": f"gh pr view failed: {stderr.decode().strip()}"}
+            return {"error": f"gh pr view failed: {proc.stderr.decode().strip()}"}
 
+        stdout_decoded = proc.stdout.decode()
     except FileNotFoundError:
         return {"error": "'gh' CLI not found on system. Install GitHub CLI."}
-    except asyncio.TimeoutError:
+    except subprocess.TimeoutExpired:
         return {"error": "gh pr view timed out"}
 
     import json
     try:
-        data = json.loads(stdout.decode())
+        data = json.loads(stdout_decoded)
     except json.JSONDecodeError:
         return {"error": "Failed to parse gh output as JSON"}
 
@@ -294,24 +301,24 @@ async def reply_to_pr_comments(
     if not body or not body.strip():
         return {"error": "Comment body must not be empty"}
 
-    ws = workspace or WORKSPACE_ROOT
+    ws = workspace or get_workspace(tool_context)
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "gh", "pr", "comment", str(pr_number),
-            "--body", body,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["gh", "pr", "comment", str(pr_number), "--body", body],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             cwd=ws,
+            timeout=30,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
 
         if proc.returncode != 0:
-            return {"error": f"gh pr comment failed: {stderr.decode().strip()}"}
+            return {"error": f"gh pr comment failed: {proc.stderr.decode().strip()}"}
 
     except FileNotFoundError:
         return {"error": "'gh' CLI not found on system. Install GitHub CLI."}
-    except asyncio.TimeoutError:
+    except subprocess.TimeoutExpired:
         return {"error": "gh pr comment timed out"}
 
     return {

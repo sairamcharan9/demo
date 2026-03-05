@@ -9,6 +9,9 @@ from agent.agent import (
     create_agent,
     ALL_TOOLS,
     SYSTEM_PROMPT,
+)
+
+from agent.callbacks import (
     before_model_callback,
     after_tool_callback,
     _infer_phase,
@@ -95,21 +98,21 @@ class TestCallbacks:
     """Verify _infer_phase logic and callback functions."""
 
     def test_phase_orient_no_plan(self):
-        assert _infer_phase({}) == "Phase 0 — Orient"
+        assert _infer_phase({}) == "Phase 0  -  Orient"
 
     def test_phase_plan_unapproved(self):
-        assert _infer_phase({"plan": ["a"], "approved": False}) == "Phase 1 — Plan"
+        assert _infer_phase({"plan": ["a"], "approved": False}) == "Phase 1  -  Plan"
 
     def test_phase_execute_in_progress(self):
         state = {"plan": ["a", "b"], "approved": True, "completed_steps": [{"step_index": 0}]}
-        assert _infer_phase(state) == "Phase 2 — Execute"
+        assert _infer_phase(state) == "Phase 2  -  Execute"
 
     def test_phase_verify_all_complete(self):
         state = {"plan": ["a"], "approved": True, "completed_steps": [{"step_index": 0}]}
-        assert _infer_phase(state) == "Phase 3 — Verify"
+        assert _infer_phase(state) == "Phase 3  -  Verify"
 
     def test_phase_submit(self):
-        assert _infer_phase({"submitted": True}) == "Phase 4 — Submit"
+        assert _infer_phase({"submitted": True}) == "Phase 4  -  Submit"
 
     def test_phase_done(self):
         assert _infer_phase({"task_complete": True}) == "DONE"
