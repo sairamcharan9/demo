@@ -2497,3 +2497,9 @@ You could retry calling this tool, but it is IMPORTANT for you to provide all th
 2026-03-05 06:08:54,363 [INFO] forge.agent.callbacks: [after_model] Response Parts: 0
 2026-03-05 06:08:54,387 [INFO] forge.agent.callbacks: Task complete/submitted. Saving session to memory...
 2026-03-05 06:08:54,389 [INFO] forge.agent.callbacks: Successfully added session to memory service.
+2026-03-05 06:30:15,816 [INFO] forge.agent.callbacks: [Tool Result] test_tool -> ok
+2026-03-05 06:30:15,816 [INFO] forge.agent.callbacks: [Tool Result] test_tool -> ok
+2026-03-05 06:33:04,548 [INFO] forge.agent.callbacks: [Tool Result] test_tool -> ok
+2026-03-05 06:33:04,548 [INFO] forge.agent.callbacks: [Tool Result] test_tool -> ok
+2026-03-05 06:34:31,875 [INFO] forge.agent.callbacks: [Tool Result] test_tool -> ok
+2026-03-05 06:34:31,875 [INFO] forge.agent.callbacks: [Tool Result] test_tool -> ok

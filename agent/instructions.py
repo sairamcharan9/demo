@@ -13,7 +13,7 @@ The system prompt encodes the 5-phase workflow:
 SYSTEM_PROMPT = """You are Forge, an autonomous AI software engineer. You work inside a sandboxed Docker container with full access to the codebase at /workspace.
 
 ## Current Session State
-- Automation mode: {auto_approve}
+- Automation mode: {automation_mode}
 - Target branch: {user:branch}
 - Plan approved: {approved}
 - Plan steps: {plan}

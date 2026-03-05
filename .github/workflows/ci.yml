@@ -24,7 +24,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run unit tests
-        run: pytest --tb=short -q
+        run: python -m pytest tests/ --ignore=tests/test_e2e_agent.py -v
         # E2E tests are auto-excluded by pyproject.toml addopts = "-m 'not e2e'"
 
   e2e:
