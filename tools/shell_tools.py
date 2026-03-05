@@ -11,11 +11,10 @@ import asyncio
 import base64
 import os
 
+import subprocess
 import aiofiles
 from google.adk.tools import ToolContext
-
-
-WORKSPACE_ROOT = os.environ.get("WORKSPACE_ROOT", "/workspace")
+from utils.workspace_utils import get_workspace
 
 
 async def run_in_bash_session(
@@ -28,23 +27,28 @@ async def run_in_bash_session(
 
     Emits AG-UI TOOL_CALL events + CUSTOM bashOutput artifact in production.
     """
-    ws = workspace or WORKSPACE_ROOT
+    ws = workspace or get_workspace(tool_context)
+    
+    # Use subprocess.run via to_thread for Windows compatibility and simplicity
+    def _run():
+        return subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=ws,
+            timeout=120
+        )
 
     try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=ws,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        proc = await asyncio.to_thread(_run)
         return {
             "exit_code": proc.returncode,
-            "stdout": stdout.decode(),
-            "stderr": stderr.decode(),
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
             "command": command,
         }
-    except asyncio.TimeoutError:
+    except subprocess.TimeoutExpired:
         return {"error": "Command timed out after 120s", "command": command}
     except Exception as exc:
         return {"error": str(exc), "command": command}

@@ -211,7 +211,8 @@ async def after_tool_callback(tool, args, tool_context, tool_response, **kwargs)
             logger.info("After tool callback. State: %s", state)
 
         if "error" in result:
-            logger.warning("[after_tool] %s -> ERROR: %s", tool_name, str(result["error"])[:200])
+            err_details = str(result["error"]) or "Unknown error (empty response)"
+            logger.warning("[after_tool] %s -> ERROR: %s", tool_name, err_details[:500])
         elif "status" in result:
             logger.info("[after_tool] %s -> %s", tool_name, result["status"])
         else:
