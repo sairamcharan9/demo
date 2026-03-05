@@ -45,7 +45,7 @@ class TestCreateAgent:
 
     def test_has_tools(self):
         agent = create_agent()
-        assert len(agent.tools) == 28
+        assert len(agent.tools) == 30
 
     def test_has_instruction(self):
         agent = create_agent()
@@ -60,11 +60,12 @@ class TestCreateAgent:
         agent = create_agent()
         assert agent.before_model_callback is not None
         assert agent.after_tool_callback is not None
+        assert agent.before_tool_callback is not None
 
 
 class TestAllTools:
     def test_tool_count(self):
-        assert len(ALL_TOOLS) == 28
+        assert len(ALL_TOOLS) == 30
 
     def test_all_tools_are_callable(self):
         from google.adk.tools import BaseTool

@@ -18,8 +18,9 @@ import uuid
 # Configure logging BEFORE any ADK imports — basicConfig is a no-op if root
 # logger already has handlers, so it MUST come before imports that create loggers.
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname).1s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("worker")
 
@@ -29,7 +30,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 from google.adk.runners import InMemoryRunner
-from google.genai.types import Content, Part
+from google.genai.types import Content, Part\
 
 # Add project root to path so tools/ and agent/ are importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -41,6 +42,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from google.adk.apps import App, ResumabilityConfig
+from google.adk.agents.context_cache_config import ContextCacheConfig
 
 # ---------------------------------------------------------------------------
 # ADK Web App Definition
@@ -50,6 +52,11 @@ from google.adk.apps import App, ResumabilityConfig
 app = App(
     name="forge",
     root_agent=create_agent(),
+    context_cache_config=ContextCacheConfig(
+        min_tokens=2048,    # Minimum tokens to trigger caching
+        ttl_seconds=600,    # Store for up to 10 minutes
+        cache_intervals=5,  # Refresh after 5 uses
+    ),
     resumability_config=ResumabilityConfig(is_resumable=True),
 )
 
@@ -67,7 +74,7 @@ AUTOMATION_MODES = {"NONE", "AUTO_APPROVE", "AUTO_CREATE_PR"}
 
 # User-level facts (persistent across sessions for the same user/repo)
 USER_DEFAULTS = {
-    "user:automation_mode": os.environ.get("AUTOMATION_MODE", "NONE"),
+    "auto_approve": os.environ.get("AUTOMATION_MODE", "NONE"),
     "user:branch": os.environ.get("branch", os.environ.get("BRANCH", "main")).strip(),
     "user:stack": "",
     "user:test_command": "",
@@ -109,7 +116,7 @@ def build_initial_state(repo_url: str, automation_mode: str) -> dict:
     # Runtime overrides
     state["repo_url"] = repo_url
     state["automation_mode"] = automation_mode
-    state["user:automation_mode"] = automation_mode
+    state["auto_approve"] = automation_mode
     return state
 
 
@@ -200,23 +207,59 @@ async def run_worker(task_arg: str | None = None, session_id_arg: str | None = N
                 user_id=user_id,
                 new_message=user_message,
             ):
-                # Log events for observability
-                if hasattr(event, "content") and event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            logger.info("[Agent] %s", part.text[:500])
-                        if hasattr(part, "function_call") and part.function_call:
-                            logger.info(
-                                "[Tool Call] %s(%s)",
-                                part.function_call.name,
-                                str(part.function_call.args)[:200],
-                            )
-                        if hasattr(part, "function_response") and part.function_response:
-                            logger.info(
-                                "[Tool Result] %s \u2192 %s",
-                                part.function_response.name,
-                                str(part.function_response.response)[:200],
-                            )
+                # 1. Log Basic Event Info
+                is_final = event.is_final_response()
+                actions = getattr(event, 'actions', None)
+                end_of_agent = getattr(actions, 'end_of_agent', False) if actions else False
+                
+                parts = []
+                if event.content and hasattr(event.content, "parts") and event.content.parts:
+                    parts = event.content.parts
+                elif isinstance(event.content, dict) and "parts" in event.content:
+                    parts = event.content["parts"]
+                    
+                calls = event.get_function_calls()
+                resps = event.get_function_responses()
+                
+                err_code = getattr(event, 'error_code', None)
+                err_msg = getattr(event, 'error_message', None)
+                
+                logger.info(
+                    "[Event] author=%-10s | final=%-5s | parts=%d | calls=%d | resps=%d | err=%s",
+                    event.author, str(is_final), len(parts), len(calls), len(resps), str(err_code)
+                )
+                if err_msg:
+                    logger.warning(" \u26a0\ufe0f  [Event Error] %s", err_msg)
+
+                # 2. Extract and Log Parts (Text, Tool Calls, Tool Results)
+                for part in parts:
+                    # Normalize part access (object or dict)
+                    p_text = getattr(part, "text", None) or (part.get("text") if isinstance(part, dict) else None)
+                    p_fc = getattr(part, "function_call", None) or (part.get("function_call") if isinstance(part, dict) else None)
+                    p_fr = getattr(part, "function_response", None) or (part.get("function_response") if isinstance(part, dict) else None)
+
+                    if p_text and p_text.strip():
+                        logger.info("\u2728 [Agent] %s", p_text.strip())
+                    
+                    if p_fc:
+                        fc_name = getattr(p_fc, "name", None) or (p_fc.get("name") if isinstance(p_fc, dict) else None)
+                        fc_args = getattr(p_fc, "args", None) or (p_fc.get("args") if isinstance(p_fc, dict) else None)
+                        logger.info("\ud83d\udee0\ufe0f  [Tool Call] %s(%s)", fc_name, str(fc_args)[:200])
+                    
+                    if p_fr:
+                        fr_name = getattr(p_fr, "name", None) or (p_fr.get("name") if isinstance(p_fr, dict) else None)
+                        fr_resp = getattr(p_fr, "response", None) or (p_fr.get("response") if isinstance(p_fr, dict) else None)
+                        status = "OK"
+                        if isinstance(fr_resp, dict) and "error" in fr_resp:
+                            status = f"ERROR: {str(fr_resp['error'])[:100]}"
+                        logger.info("\u2705 [Tool Result] %s \u2192 %s", fr_name, status)
+
+                # 3. Log State Changes if present in actions
+                if actions and hasattr(actions, "state_delta") and actions.state_delta:
+                    logger.info("[State Delta] %s", actions.state_delta)
+
+                if end_of_agent:
+                    logger.debug("End of agent signal received.")
             # If we get here, the loop finished successfully
             break
 

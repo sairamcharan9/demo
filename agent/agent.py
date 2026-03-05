@@ -3,7 +3,7 @@ Agent — LlmAgent definition wiring all 32 tools with a system prompt.
 
 The system prompt encodes the 5-phase workflow:
   0. Orient  — list_files, read_file to understand the repo
-  1. Plan    — set_plan, request_plan_review, wait for approval
+  1. Plan    — set_plan, record_user_approval_for_plan, wait for approval
   2. Execute — write_file, replace_with_git_merge_diff, run_in_bash_session
   3. Verify  — tests, lint, frontend_verification
   4. Submit  — pre_commit_instructions, make_commit, submit, done
@@ -81,6 +81,10 @@ from tools.specialized_tools import (
     call_hello_world_agent,
 )
 
+# -- Memory tools -------------------------------------------------------------
+from google.adk.tools.load_memory_tool import LoadMemoryTool
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+
 
 # ---------------------------------------------------------------------------
 # All tools — order matters for the model; group by workflow phase
@@ -125,6 +129,11 @@ ALL_TOOLS = [
     frontend_verification_complete,
     start_live_preview_instructions,
     call_hello_world_agent,
+    
+    # Memory
+    LoadMemoryTool(),
+    PreloadMemoryTool(),
+    
     done,
 ]
 
@@ -135,7 +144,10 @@ ALL_TOOLS = [
 from agent.callbacks import (
     before_agent_callback,
     before_model_callback,
+    after_model_callback,
+    before_tool_callback,
     after_tool_callback,
+    auto_save_session_to_memory_callback,
 )
 
 
@@ -168,7 +180,10 @@ def create_agent(
         description="Forge — autonomous AI software engineer",
         before_agent_callback=before_agent_callback,
         before_model_callback=before_model_callback,
+        after_model_callback=after_model_callback,
+        before_tool_callback=before_tool_callback,
         after_tool_callback=after_tool_callback,
+        after_agent_callback=auto_save_session_to_memory_callback,
     )
 
     return agent

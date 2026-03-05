@@ -74,7 +74,7 @@ async def plan_step_complete(step_index: int, summary: str, tool_context: ToolCo
     }
 
 
-async def request_code_review(tool_context: ToolContext) -> dict:
+async def request_code_review(tool_context: ToolContext = None, _dummy: str = "") -> dict:
     """Pause the agent and request user approval for the current plan.
 
     Sets ``awaiting_approval`` to True. In production this emits an
@@ -93,7 +93,7 @@ async def request_code_review(tool_context: ToolContext) -> dict:
     }
 
 
-async def record_user_approval_for_plan(tool_context: ToolContext) -> dict:
+async def record_user_approval_for_plan(tool_context: ToolContext = None, _dummy: str = "") -> dict:
     """Record that the user has approved the plan.
 
     Sets ``approved`` to True and clears ``awaiting_approval``.
@@ -110,7 +110,7 @@ async def record_user_approval_for_plan(tool_context: ToolContext) -> dict:
     }
 
 
-async def pre_commit_instructions(tool_context: ToolContext = None) -> dict:
+async def pre_commit_instructions(tool_context: ToolContext = None, _dummy: str = "") -> dict:
     """Return the pre-commit checklist the agent must complete before submit().
 
     This is a verification gate — the agent self-checks these items.

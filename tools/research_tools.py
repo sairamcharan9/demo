@@ -31,7 +31,7 @@ MAX_TEXT_BYTES = 50_000
 async def view_text_website(
     url: str,
     tool_context: ToolContext = None,
-    workspace: str | None = None,
+    workspace: str = "",
 ) -> dict:
     """Fetch a URL and extract readable text content.
 
@@ -84,7 +84,7 @@ async def view_text_website(
     }
 
 
-def _resolve_safe_path(relative_path: str, workspace: str | None = None) -> str:
+def _resolve_safe_path(relative_path: str, workspace: str = "") -> str:
     """Resolve a path safely within the workspace boundary."""
     ws = workspace or WORKSPACE_ROOT
     resolved = os.path.normpath(os.path.join(ws, relative_path))
@@ -96,7 +96,7 @@ def _resolve_safe_path(relative_path: str, workspace: str | None = None) -> str:
 async def view_image(
     url: str,
     tool_context: ToolContext = None,
-    workspace: str | None = None,
+    workspace: str = "",
 ) -> dict:
     """Load and analyze an image from a URL.
 
@@ -143,7 +143,7 @@ async def view_image(
 async def read_image_file(
     path: str,
     tool_context: ToolContext = None,
-    workspace: str | None = None,
+    workspace: str = "",
 ) -> dict:
     """Read an image file from the workspace and return base64-encoded content.
 

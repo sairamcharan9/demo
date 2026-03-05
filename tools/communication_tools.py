@@ -49,6 +49,11 @@ async def message_user(message: str, tool_context: ToolContext) -> dict:
     messages = tool_context.state.get("messages", [])
     messages.append(message)
     tool_context.state["messages"] = messages
+    
+    # Also append to typed_messages for UI stream visibility
+    typed_messages = tool_context.state.get("typed_messages", [])
+    typed_messages.append({"role": "assistant", "content": message})
+    tool_context.state["typed_messages"] = typed_messages
 
     return {
         "status": "ok",
@@ -79,7 +84,7 @@ async def request_user_input(prompt: str, tool_context: ToolContext) -> dict:
 
 import uuid
 
-async def submit(commit_message: str, branch_name: str, pr_title: str, tool_context: ToolContext, workspace: str | None = None) -> dict:
+async def submit(commit_message: str, branch_name: str, pr_title: str, tool_context: ToolContext, workspace: str = "") -> dict:
     """Submit the completed work by committing, pushing, and creating a PR.
 
     Performs the full git submission flow:
@@ -102,7 +107,7 @@ async def submit(commit_message: str, branch_name: str, pr_title: str, tool_cont
 
     # Check plan approval
     if not tool_context.state.get("approved", False):
-        return {"error": "Cannot submit — plan has not been approved. Call request_plan_review() first."}
+        return {"error": "Cannot submit — plan has not been approved. Call record_user_approval_for_plan() first."}
 
     # Check all steps complete
     plan = tool_context.state.get("plan", [])
@@ -117,11 +122,12 @@ async def submit(commit_message: str, branch_name: str, pr_title: str, tool_cont
     session_id = getattr(tool_context, "session_id", None)
     if not session_id:
         session_id = uuid.uuid4().hex[:8]
-        
-    # Construct full branch name safely removing invalid characters
-    clean_branch = re.sub(r'[^a-zA-Z0-9_-]', '-', branch_name)
-    full_branch_name = f"{clean_branch}-{session_id}"
 
+    full_branch_name = tool_context.state.get("current_branch", False)
+    # Construct full branch name safely removing invalid characters
+    if not full_branch_name:
+        clean_branch = re.sub(r'[^a-zA-Z0-9_-]', '-', branch_name)
+        full_branch_name = f"{clean_branch}-{session_id}"
     try:
         # 1. Checkout new branch
         rc, _, err = await _run_git(["git", "checkout", "-b", full_branch_name], ws)
@@ -235,7 +241,7 @@ async def done(summary: str, tool_context: ToolContext) -> dict:
 
 
 async def read_pr_comments(
-    pr_number: int, tool_context: ToolContext = None, workspace: str | None = None
+    pr_number: int, tool_context: ToolContext = None, workspace: str = ""
 ) -> dict:
     """Fetch comments on a GitHub PR using the ``gh`` CLI.
 
@@ -289,7 +295,7 @@ async def read_pr_comments(
 
 
 async def reply_to_pr_comments(
-    pr_number: int, body: str, tool_context: ToolContext = None, workspace: str | None = None
+    pr_number: int, body: str, tool_context: ToolContext = None, workspace: str = ""
 ) -> dict:
     """Post a comment on a GitHub PR using the ``gh`` CLI.
 

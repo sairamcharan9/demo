@@ -2,7 +2,7 @@ import os
 import aiofiles
 from google.adk.tools import ToolContext
 
-async def start_live_preview_instructions(tool_context: ToolContext = None) -> dict:
+async def start_live_preview_instructions(tool_context: ToolContext = None, _dummy: str = "") -> dict:
     """Provides instructions for starting a live preview server.
     
     Returns standard instructions dynamically depending on the detected framework.
@@ -19,7 +19,7 @@ async def start_live_preview_instructions(tool_context: ToolContext = None) -> d
         )
     }
 
-async def call_hello_world_agent(tool_context: ToolContext = None) -> dict:
+async def call_hello_world_agent(tool_context: ToolContext = None, _dummy: str = "") -> dict:
     """Calls a test sub-agent and returns its response.
     
     This is a stub tool used for testing sub-agent invocation capabilities.
