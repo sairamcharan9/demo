@@ -5,13 +5,13 @@ import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agent.agent import (
+from app.agent import (
     create_agent,
-    ALL_TOOLS,
-    SYSTEM_PROMPT,
 )
 
-from agent.callbacks import (
+from app.instructions import COORDINATOR_INSTRUCTIONS as SYSTEM_PROMPT
+
+from app.callbacks import (
     before_model_callback,
     after_tool_callback,
     _infer_phase,
@@ -45,7 +45,8 @@ class TestCreateAgent:
 
     def test_has_tools(self):
         agent = create_agent()
-        assert len(agent.tools) == 30
+        # Coordinator has: planner tool, execution_pipeline tool, message_user, request_user_input, done
+        assert len(agent.tools) == 5
 
     def test_has_instruction(self):
         agent = create_agent()
@@ -63,36 +64,21 @@ class TestCreateAgent:
         assert agent.before_tool_callback is not None
 
 
-class TestAllTools:
-    def test_tool_count(self):
-        assert len(ALL_TOOLS) == 30
-
-    def test_all_tools_are_callable(self):
-        from google.adk.tools import BaseTool
-        for tool in ALL_TOOLS:
-            # ADK tools are objects, raw tools are callables
-            assert callable(tool) or isinstance(tool, BaseTool), f"{tool} is neither callable nor a BaseTool"
-
-    def test_all_tools_are_async(self):
-        import asyncio
-        from google.adk.tools import BaseTool
-        for tool in ALL_TOOLS:
-            if not isinstance(tool, BaseTool):
-                assert asyncio.iscoroutinefunction(tool), f"{tool.__name__} is not async"
+# TestAllTools removed as ALL_TOOLS is no longer exported or used in the same way
 
 
 class TestSystemPrompt:
     def test_mentions_all_phases(self):
-        for phase in ["Phase 0", "Phase 1", "Phase 2", "Phase 3", "Phase 4"]:
-            assert phase in SYSTEM_PROMPT
+        # Coordinator prompt uses direct delegation terms
+        for phase in ["planner", "execution_pipeline"]:
+            assert phase in SYSTEM_PROMPT.lower()
 
     def test_mentions_key_tools(self):
-        key_tools = [
-            "list_files", "read_file", "set_plan", "request_code_review",
-            "write_file", "run_in_bash_session", "submit", "done",
-        ]
-        for tool_name in key_tools:
-            assert tool_name in SYSTEM_PROMPT, f"{tool_name} not in system prompt"
+        # Coordinator primarily mentions phases/sub-agents
+        key_terms = ["planner", "execution_pipeline"]
+        lower_prompt = SYSTEM_PROMPT.lower()
+        for term in key_terms:
+            assert term in lower_prompt, f"{term} not in system prompt"
 
 
 class TestCallbacks:
@@ -141,8 +127,11 @@ class TestStateInjectionKeys:
 
     def test_all_placeholders_are_valid_state_keys(self):
         import re
-        # Extract all {key} placeholders from the system prompt
-        placeholders = set(re.findall(r"\{(\w+)\}", SYSTEM_PROMPT))
+        # Extract all {key} placeholders from the system prompt, handling : and ?
+        placeholders = set(re.findall(r"\{([\w:?\-]+)\}", SYSTEM_PROMPT))
+
+        # Filter base keys (before : or ?)
+        base_keys = {p.split(":")[0].split("?")[0] for p in placeholders}
 
         # These are the keys pre-seeded in worker/main.py create_session()
         valid_state_keys = {
@@ -150,9 +139,9 @@ class TestStateInjectionKeys:
             "approved", "submitted", "task_complete", "awaiting_approval",
             "commit_message", "final_summary", "messages", "typed_messages",
             "awaiting_user_input", "user_input_prompt", "pr_url", "pr_number",
-            "current_branch",
+            "current_branch", "user", "repo_url",
         }
 
-        missing = placeholders - valid_state_keys
-        assert not missing, f"System prompt uses {{key}} placeholders not in session state: {missing}"
+        missing = base_keys - valid_state_keys
+        assert not missing, f"System prompt uses {{key}} placeholders not in session state: {missing}. Found placeholders: {placeholders}, base_keys: {base_keys}"
 

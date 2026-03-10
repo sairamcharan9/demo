@@ -131,7 +131,7 @@ RESET_DEFAULTS = {
 
 # Values that MUST exist for the SYSTEM_PROMPT template to resolve
 MANDATORY_STATE_DEFAULTS = {
-    "auto_approve": os.environ.get("AUTOMATION_MODE", "NONE"),
+    "automation_mode": os.environ.get("AUTOMATION_MODE", "NONE"),
     "user:branch": os.environ.get("BRANCH", os.environ.get("branch", "main")).strip(),
     "approved": False,
     "plan": [],
@@ -326,7 +326,7 @@ async def after_tool_callback(tool, args, tool_context, tool_response, **kwargs)
         elif "status" in result:
             logger.info("[Tool Result] %s -> %s", tool_name, result["status"])
         else:
-            logger.debug("[Tool Result] %s -> completed", tool_name)
+            logger.info("[Tool Result] %s -> completed", tool_name)
 
         # 2. Track and Log State Changes
         before_state = state.get("temp:before_tool_state")
@@ -346,15 +346,19 @@ async def after_tool_callback(tool, args, tool_context, tool_response, **kwargs)
                     diff[k] = v
             
             if diff:
-                # Filter out messages/typed_messages if they are too noisy, 
-                # but user asked to log state changes, so let's show them concisely.
                 logger.info("[State Changed] %s", diff)
             
-            # Clean up temp state by setting to None (State doesn't support del/pop)
+            # Clean up temp state. Use None instead of del if State doesn't support del.
             try:
                 state["temp:before_tool_state"] = None
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to clear temp state: %s", e)
+        else:
+            logger.debug("[after_tool] No before_state found in temp storage.")
+
+        # Log current total keys for troubleshooting "clearing" issues
+        if hasattr(state, "keys"):
+            logger.debug("[after_tool] Current state keys: %s", list(state.keys()))
 
     except Exception as exc:
         logger.debug("[after_tool] tracking failed: %s", exc)
