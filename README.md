@@ -7,7 +7,7 @@
 ## ✨ Features
 
 - **32 built-in tools** — file I/O, shell execution, git operations, web research, planning, and user communication
-- **5-phase workflow** — Orient → Plan → Execute → Verify → Submit
+- **4-phase workflow** — Plan → Execute → Verify → Submit
 - **Plan-review gate** — the agent never writes code until the user approves the plan
 - **Auto-branch creation** — feature branches are automatically created once the plan is approved
 - **Local sandbox** — all file and shell access is confined to the `workspace/` directory
@@ -34,7 +34,7 @@ forge/
 ├── tools/
 │   ├── file_tools.py          # 8 tools: list, read, write, diff, delete, rename, restore, reset
 │   ├── shell_tools.py         # 3 tools: bash execution, frontend verification
-│   ├── planning_tools.py      # 6 tools: plan lifecycle, memory recording
+│   ├── planning_tools.py      # 14 tools: orientation + plan lifecycle + memory recording
 │   ├── communication_tools.py # 7 tools: messaging, submit, done, PR comments
 │   ├── research_tools.py      # 4 tools: Google Search, web scraping, screenshots
 │   └── git_tools.py           # 4 tools: commit, branch, PR, CI status
@@ -69,15 +69,19 @@ forge/
 | `frontend_verification_instructions` | Return Playwright test instructions |
 | `frontend_verification_complete` | Read and return verification screenshots |
 
-### Planning Tools
+### Planning & Orientation Tools
 | Tool | Purpose |
 |---|---|
+| `list_files` | List all files in a directory tree |
+| `read_file` | Read file content with line numbers |
 | `set_plan` | Write execution plan to session state |
 | `plan_step_complete` | Mark a step as done, advance to next |
-| `request_code_review` | Pause and wait for user approval |
 | `record_user_approval_for_plan` | Record plan approval |
 | `pre_commit_instructions` | Return pre-submit checklist |
 | `initiate_memory_recording` | Persist a discovered fact |
+| `view_text_website` | Fetch URL and extract readable text |
+| `view_image` | Fetch and analyze an image URL |
+| `read_image_file` | Read an image file and return base64 |
 
 ### Communication Tools
 | Tool | Purpose |
@@ -174,13 +178,13 @@ All configuration is via environment variables (see `.env.example`):
 ## 🤖 How the Agent Works
 
 ```
-┌─────────────┐     ┌──────────┐     ┌───────────┐     ┌──────────┐     ┌──────────┐
-│  0. Orient  │ ──▶ │ 1. Plan  │ ──▶ │ 2. Execute│ ──▶ │ 3. Verify│ ──▶ │ 4. Submit│
-│ list_files  │     │ set_plan │     │ write_file│     │ run tests│     │ commit   │
-│ read_file   │     │ review   │     │ diff edit │     │ lint     │     │ create_pr│
-│ research    │     │ approval │     │ bash cmds │     │ Playwright│    │ submit   │
-│ memory rec  │     │ branch   │     │ step done │     │ frontend │     │ done     │
-└─────────────┘     └──────────┘     └───────────┘     └──────────┘     └──────────┘
+┌──────────┐     ┌───────────┐     ┌──────────┐     ┌──────────┐
+│ 1. Plan  │ ──▶ │ 2. Execute│ ──▶ │ 3. Verify│ ──▶ │ 4. Submit│
+│ list_files│    │ write_file│     │ run tests│     │ commit   │
+│ read_file │     │ diff edit │     │ lint     │     │ create_pr│
+│ set_plan  │     │ bash cmds │     │ Playwright│    │ submit   │
+│ memory rec│     │ step done │     │ frontend │     │ done     │
+└──────────┘     └───────────┘     └──────────┘     └──────────┘
 ```
 
 **Key rules:**

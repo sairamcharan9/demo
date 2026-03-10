@@ -35,7 +35,7 @@ from google.genai.types import Content, Part\
 # Add project root to path so tools/ and agent/ are importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agent.agent import create_agent
+from app.agent import create_agent
 
 # Enable ProactorEventLoop on Windows for async subprocesses
 if sys.platform == "win32":

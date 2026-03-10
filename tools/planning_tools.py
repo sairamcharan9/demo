@@ -74,23 +74,6 @@ async def plan_step_complete(step_index: int, summary: str, tool_context: ToolCo
     }
 
 
-async def request_code_review(tool_context: ToolContext = None, _dummy: str = "") -> dict:
-    """Pause the agent and request user approval for the current plan.
-
-    Sets ``awaiting_approval`` to True. In production this emits an
-    AG-UI INTERRUPT event. The agent blocks until ``approvePlan`` is called.
-    """
-    plan = tool_context.state.get("plan")
-    if not plan:
-        return {"error": "No plan to review — call set_plan() first"}
-
-    tool_context.state["awaiting_approval"] = True
-
-    return {
-        "status": "awaiting_approval",
-        "plan": plan,
-        "message": "Plan submitted for review. Waiting for user approval.",
-    }
 
 
 async def record_user_approval_for_plan(tool_context: ToolContext = None, _dummy: str = "") -> dict:
